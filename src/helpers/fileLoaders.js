@@ -33,13 +33,13 @@ function parsePcd(buffer, name, maxPoints) {
   }
 
   const dataType = dataMatch[1].toLowerCase();
+  if (dataType === 'binary_compressed') {
+    throw new Error('binary_compressed PCD is not supported by this lightweight loader.');
+  }
+
   const headerEnd = dataMatch.index + dataMatch[0].length;
   const headerText = headerPreview.slice(0, headerEnd);
   const header = parsePcdHeader(headerText);
-
-  if (dataType === 'binary_compressed') {
-    return parsePcdBinaryCompressedBody(buffer, headerEnd, header, name, maxPoints);
-  }
 
   if (dataType === 'ascii') {
     const body = textDecoder.decode(buffer.slice(headerEnd));
@@ -127,101 +127,6 @@ function parsePcdBinaryBody(buffer, headerEnd, header, name, maxPoints) {
   return buildMapData(positions, name, 'PCD Binary', total);
 }
 
-function parsePcdBinaryCompressedBody(buffer, headerEnd, header, name, maxPoints) {
-  const sizeView = new DataView(buffer, headerEnd, 8);
-  const compressedSize = sizeView.getUint32(0, true);
-  const uncompressedSize = sizeView.getUint32(4, true);
-  const compressedStart = headerEnd + 8;
-  const compressedEnd = compressedStart + compressedSize;
-
-  if (compressedEnd > buffer.byteLength) {
-    throw new Error('Invalid PCD: compressed binary payload is truncated.');
-  }
-
-  const compressed = new Uint8Array(buffer, compressedStart, compressedSize);
-  const decompressed = decompressLzf(compressed, uncompressedSize);
-  const total = header.points || Math.floor(uncompressedSize / header.rowSize);
-  const stride = Math.max(1, Math.ceil(total / maxPoints));
-  const positions = [];
-  const xField = header.fields.indexOf('x');
-  const yField = header.fields.indexOf('y');
-  const zField = header.fields.indexOf('z');
-  const fieldBlocks = getCompressedFieldBlocks(header, total);
-
-  for (let pointIndex = 0; pointIndex < total; pointIndex += stride) {
-    const x = readCompressedPcdScalar(decompressed, fieldBlocks[xField], pointIndex, header.type[xField], header.size[xField]);
-    const y = readCompressedPcdScalar(decompressed, fieldBlocks[yField], pointIndex, header.type[yField], header.size[yField]);
-    const z = readCompressedPcdScalar(decompressed, fieldBlocks[zField], pointIndex, header.type[zField], header.size[zField]);
-
-    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-      positions.push(x, y, z);
-    }
-  }
-
-  return buildMapData(positions, name, 'PCD Binary Compressed', total);
-}
-
-function getCompressedFieldBlocks(header, total) {
-  let blockOffset = 0;
-  return header.fields.map((_, index) => {
-    const byteLength = (header.size[index] || 4) * (header.count[index] || 1);
-    const block = { offset: blockOffset, byteLength };
-    blockOffset += byteLength * total;
-    return block;
-  });
-}
-
-function readCompressedPcdScalar(bytes, block, pointIndex, type = 'F', size = 4) {
-  const offset = block.offset + pointIndex * block.byteLength;
-  const view = new DataView(bytes.buffer, bytes.byteOffset + offset, size);
-  return readPcdScalar(view, 0, type, size);
-}
-
-function decompressLzf(input, outputLength) {
-  const output = new Uint8Array(outputLength);
-  let inputIndex = 0;
-  let outputIndex = 0;
-
-  while (inputIndex < input.length) {
-    const control = input[inputIndex++];
-
-    if (control < 32) {
-      const literalLength = control + 1;
-      if (outputIndex + literalLength > output.length || inputIndex + literalLength > input.length) {
-        throw new Error('Invalid PCD: compressed literal block is out of bounds.');
-      }
-      output.set(input.subarray(inputIndex, inputIndex + literalLength), outputIndex);
-      inputIndex += literalLength;
-      outputIndex += literalLength;
-      continue;
-    }
-
-    let matchLength = control >> 5;
-    let referenceOffset = outputIndex - ((control & 0x1f) << 8) - 1;
-    if (matchLength === 7) {
-      if (inputIndex >= input.length) throw new Error('Invalid PCD: compressed match length is truncated.');
-      matchLength += input[inputIndex++];
-    }
-    if (inputIndex >= input.length) throw new Error('Invalid PCD: compressed match offset is truncated.');
-    referenceOffset -= input[inputIndex++];
-    matchLength += 2;
-
-    if (referenceOffset < 0 || outputIndex + matchLength > output.length) {
-      throw new Error('Invalid PCD: compressed back-reference is out of bounds.');
-    }
-
-    for (let index = 0; index < matchLength; index += 1) {
-      output[outputIndex++] = output[referenceOffset + index];
-    }
-  }
-
-  if (outputIndex !== output.length) {
-    throw new Error('Invalid PCD: compressed payload did not expand to the expected size.');
-  }
-
-  return output;
-}
-
 function readPcdScalar(view, offset, type = 'F', size = 4) {
   const littleEndian = true;
   if (type === 'F') {
@@ -304,130 +209,6 @@ function buildMapData(positions, name, format, originalCount) {
     name,
     format,
     originalCount,
-    sampledCount: positions.length / 3,
-    positions: new Float32Array(positions),
-  };
-}
-
-function filterPositionsByRange(positions, range) {
-  if (!positions?.length) return new Float32Array(0);
-  if (!range) return positions;
-
-  const xMin = range.x?.[0] ?? -Infinity;
-  const xMax = range.x?.[1] ?? Infinity;
-  const yMin = range.y?.[0] ?? -Infinity;
-  const yMax = range.y?.[1] ?? Infinity;
-  const zMin = range.z?.[0] ?? -Infinity;
-  const zMax = range.z?.[1] ?? Infinity;
-
-  const output = [];
-  for (let index = 0; index < positions.length; index += 3) {
-    const x = positions[index];
-    const y = positions[index + 1];
-    const z = positions[index + 2];
-    if (x >= xMin && x <= xMax && y >= yMin && y <= yMax && z >= zMin && z <= zMax) {
-      output.push(x, y, z);
-    }
-  }
-  return new Float32Array(output);
-}
-
-function formatPcdScalar(value) {
-  if (!Number.isFinite(value)) return '0';
-  const rounded = Math.round(value * 1e6) / 1e6;
-  return rounded.toString();
-}
-
-function buildPcdAscii(positions) {
-  const pointCount = Math.floor(positions.length / 3);
-  const lines = [
-    '# .PCD v0.7 - Point Cloud Data file format',
-    'VERSION 0.7',
-    'FIELDS x y z',
-    'SIZE 4 4 4',
-    'TYPE F F F',
-    'COUNT 1 1 1',
-    `WIDTH ${pointCount}`,
-    'HEIGHT 1',
-    'VIEWPOINT 0 0 0 1 0 0 0',
-    `POINTS ${pointCount}`,
-    'DATA ascii',
-  ];
-
-  for (let index = 0; index < positions.length; index += 3) {
-    lines.push(
-      `${formatPcdScalar(positions[index])} ${formatPcdScalar(positions[index + 1])} ${formatPcdScalar(positions[index + 2])}`,
-    );
-  }
-
-  return `${lines.join('\n')}\n`;
-}
-
-function makeFilteredFileName(baseName) {
-  const stripped = (baseName || 'point_cloud').replace(/\.[^.]+$/, '');
-  return `${stripped}_clipped.pcd`;
-}
-
-export function downloadFilteredPointCloud(mapData, range) {
-  const filtered = filterPositionsByRange(mapData?.positions, range);
-  const pointCount = Math.floor(filtered.length / 3);
-  if (!pointCount) {
-    throw new Error('No points fall within the current clipping range.');
-  }
-
-  const pcd = buildPcdAscii(filtered);
-  const fileName = makeFilteredFileName(mapData?.name);
-  const blob = new Blob([pcd], { type: 'application/octet-stream' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-  return pointCount;
-}
-
-const DEFAULT_MAX_PATH_POINTS = 200000;
-
-export async function parsePathFile(file, options = {}) {
-  const text = await file.text();
-  return parsePathText(text, file.name, options.maxPoints || DEFAULT_MAX_PATH_POINTS);
-}
-
-function parsePathText(text, name, maxPoints) {
-  const rows = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'));
-  if (!rows.length) throw new Error('Path file is empty.');
-
-  // Drop a header row like "x,y,z,qx,qy,qz,qw" when the first cell is non-numeric.
-  let startIndex = 0;
-  const firstCells = rows[0].split(/[,\s]+/);
-  if (firstCells.length && Number.isNaN(Number(firstCells[0]))) startIndex = 1;
-
-  const dataRows = rows.slice(startIndex);
-  const stride = Math.max(1, Math.ceil(dataRows.length / maxPoints));
-  const positions = [];
-
-  for (let index = 0; index < dataRows.length; index += stride) {
-    const values = dataRows[index].split(/[,\s]+/).map(Number);
-    const x = values[0];
-    const y = values[1];
-    const z = values.length > 2 ? values[2] : 0;
-    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-      positions.push(x, y, z);
-    }
-  }
-
-  if (!positions.length) throw new Error('No valid points found in path file.');
-
-  return {
-    name,
-    format: 'Path CSV',
-    originalCount: dataRows.length,
     sampledCount: positions.length / 3,
     positions: new Float32Array(positions),
   };

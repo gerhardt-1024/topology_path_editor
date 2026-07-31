@@ -24,9 +24,10 @@ A single-page React + Three.js application for visualizing point-cloud maps and 
 - Display the map and topology in a 3D Three.js scene.
 - Drag topology nodes and update their `x`, `y`, `z` values.
 - Add/delete topology nodes from the panel or place a new node directly in the 3D view.
-- Drag nodes in the node list to reorder them and renumber node IDs.
+- Adding a node while another node is selected connects only to that selected node with a new branch edge; other edges (including other branches from the same node) are left untouched. Adding a node with no selection leaves it unconnected.
+- Deleting a node removes only the edges touching it; unrelated edges elsewhere in the graph, including other branches, are preserved.
+- Drag nodes in the node list to reorder them and renumber node IDs; existing edges keep their endpoints (remapped through the id change) instead of being rebuilt.
 - Edit a selected node ID manually; if the target ID already exists, that node and following nodes are shifted forward.
-- After nodes are added, deleted, reordered, or renumbered, edges are rebuilt in node order; paths with matching endpoints are preserved, and only new or affected edges get generated points.
 - Add/delete edges.
 - Edit node type values.
 - Default node types:
@@ -252,6 +253,6 @@ Select an edge and enable `Path lock` in the edge panel. While locked:
 - Loading JSON preserves existing `path_points`; moving a node only regenerates connected unlocked edges, and moving a temporary point only regenerates that edge.
 - If an input JSON contains node types outside the default set, those types are added to the type list automatically.
 - Node ID changes update edge `from`/`to` references automatically.
-- Node add/delete/reorder operations rebuild the edge list as an ordered chain of adjacent nodes.
+- The topology is a general graph, not a forced single chain: a node can have multiple outgoing/incoming edges (branches), and node add/delete/reorder operations only touch the edges that reference the affected node instead of rebuilding the whole edge list.
 - Export updates metadata counts and `distance_threshold` from the current spacing value.
 - Regenerated path-point rotations are derived from the path direction in the XY plane.

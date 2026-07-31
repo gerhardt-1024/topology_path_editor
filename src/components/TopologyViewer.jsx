@@ -102,151 +102,11 @@ function makePointCloud(mapData, pointCloudStyle = {}) {
     sizeAttenuation: true,
     transparent: true,
     opacity: 0.82,
-    clippingPlanes: pointCloudStyle.clippingPlanes || [],
-    clipIntersection: false,
   });
 
   const points = new THREE.Points(geometry, material);
   points.userData.kind = 'map';
   return points;
-}
-
-function makePickedPointMarker(point) {
-  const group = new THREE.Group();
-  group.position.set(Number(point?.x) || 0, Number(point?.y) || 0, Number(point?.z) || 0);
-  group.userData = { kind: 'pickedPointMarkerGroup' };
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
-
-  const halo = new THREE.Points(
-    geometry.clone(),
-    new THREE.PointsMaterial({
-      color: '#22c55e',
-      size: 0.13,
-      sizeAttenuation: true,
-      transparent: true,
-      opacity: 0.55,
-      depthTest: false,
-    }),
-  );
-  halo.userData = { kind: 'pickedPointMarkerHalo', parentGroup: group };
-  group.add(halo);
-
-  const marker = new THREE.Points(
-    geometry,
-    new THREE.PointsMaterial({
-      color: '#facc15',
-      size: 0.07,
-      sizeAttenuation: true,
-      depthTest: false,
-    }),
-  );
-  marker.userData = { kind: 'pickedPointMarker', parentGroup: group };
-  group.add(marker);
-
-  return group;
-}
-
-function makePathOverlay(pathData, color = '#f43f5e') {
-  const positions = pathData.positions;
-  const group = new THREE.Group();
-  group.userData = { kind: 'pathOverlay' };
-
-  const lineGeometry = new THREE.BufferGeometry();
-  lineGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  const line = new THREE.Line(
-    lineGeometry,
-    new THREE.LineBasicMaterial({
-      color: new THREE.Color(color).getHex(),
-      transparent: true,
-      opacity: 0.95,
-    }),
-  );
-  line.userData = { kind: 'pathOverlayLine' };
-  group.add(line);
-
-  const markerGeometry = new THREE.BufferGeometry();
-  markerGeometry.setAttribute('position', new THREE.BufferAttribute(positions.slice(), 3));
-  const markers = new THREE.Points(
-    markerGeometry,
-    new THREE.PointsMaterial({
-      color: new THREE.Color(color).getHex(),
-      size: 0.055,
-      sizeAttenuation: true,
-      transparent: true,
-      opacity: 0.9,
-    }),
-  );
-  markers.userData = { kind: 'pathOverlayMarkers' };
-  group.add(markers);
-
-  return group;
-}
-
-function getNearestScreenPoint(pointsObject, event, camera, domElement, range) {
-  const position = pointsObject?.geometry?.attributes?.position;
-  if (!position) return null;
-
-  const rect = domElement.getBoundingClientRect();
-  const targetX = event.clientX - rect.left;
-  const targetY = event.clientY - rect.top;
-  const worldPoint = new THREE.Vector3();
-  const screenPoint = new THREE.Vector3();
-  const maxPixelDistance = 10;
-  let best = null;
-  let bestDistanceSq = maxPixelDistance * maxPixelDistance;
-
-  for (let index = 0; index < position.count; index += 1) {
-    worldPoint
-      .set(position.getX(index), position.getY(index), position.getZ(index))
-      .applyMatrix4(pointsObject.matrixWorld);
-
-    if (!isPointInsideRange(worldPoint, range)) continue;
-
-    screenPoint.copy(worldPoint).project(camera);
-    if (screenPoint.z < -1 || screenPoint.z > 1) continue;
-
-    const screenX = ((screenPoint.x + 1) / 2) * rect.width;
-    const screenY = ((1 - screenPoint.y) / 2) * rect.height;
-    const distanceSq = ((screenX - targetX) ** 2) + ((screenY - targetY) ** 2);
-
-    if (distanceSq < bestDistanceSq) {
-      bestDistanceSq = distanceSq;
-      best = {
-        x: worldPoint.x,
-        y: worldPoint.y,
-        z: worldPoint.z,
-        index,
-      };
-    }
-  }
-
-  return best;
-}
-
-function makeClippingPlanes(range) {
-  if (!range) return [];
-  return [
-    new THREE.Plane(new THREE.Vector3(1, 0, 0), -Number(range.x?.[0] || 0)),
-    new THREE.Plane(new THREE.Vector3(-1, 0, 0), Number(range.x?.[1] || 0)),
-    new THREE.Plane(new THREE.Vector3(0, 1, 0), -Number(range.y?.[0] || 0)),
-    new THREE.Plane(new THREE.Vector3(0, -1, 0), Number(range.y?.[1] || 0)),
-    new THREE.Plane(new THREE.Vector3(0, 0, 1), -Number(range.z?.[0] || 0)),
-    new THREE.Plane(new THREE.Vector3(0, 0, -1), Number(range.z?.[1] || 0)),
-  ];
-}
-
-function isPointInsideRange(point, range) {
-  if (!range) return true;
-  return (
-    point.x >= Number(range.x?.[0] ?? -Infinity) &&
-    point.x <= Number(range.x?.[1] ?? Infinity) &&
-    point.y >= Number(range.y?.[0] ?? -Infinity) &&
-    point.y <= Number(range.y?.[1] ?? Infinity) &&
-    point.z >= Number(range.z?.[0] ?? -Infinity) &&
-    point.z <= Number(range.z?.[1] ?? Infinity)
-  );
 }
 
 function makeRotationArrow(point, options = {}) {
@@ -480,7 +340,7 @@ function updateTemporaryPointEdgePreview(drag, position, spacing) {
   applyPositionsToGeometry(drag.previewVisual.markers, positions.slice());
 }
 
-function getContentBounds(mapObject, topologyGroup, pathObject) {
+function getContentBounds(mapObject, topologyGroup) {
   const box = new THREE.Box3();
   let hasContent = false;
 
@@ -492,10 +352,6 @@ function getContentBounds(mapObject, topologyGroup, pathObject) {
     box.expandByObject(topologyGroup);
     hasContent = true;
   }
-  if (pathObject?.children.length) {
-    box.expandByObject(pathObject);
-    hasContent = true;
-  }
 
   if (!hasContent || box.isEmpty()) {
     box.setFromCenterAndSize(new THREE.Vector3(0, 0, 0), new THREE.Vector3(8, 8, 3));
@@ -504,8 +360,8 @@ function getContentBounds(mapObject, topologyGroup, pathObject) {
   return box;
 }
 
-function getContentCameraMetrics(mapObject, topologyGroup, pathObject) {
-  const box = getContentBounds(mapObject, topologyGroup, pathObject);
+function getContentCameraMetrics(mapObject, topologyGroup) {
+  const box = getContentBounds(mapObject, topologyGroup);
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z, 2);
@@ -524,8 +380,8 @@ function applyCameraPose({ camera, controls, center, distance, direction, up }) 
   controls.update();
 }
 
-function fitCameraToContent({ camera, controls, mapObject, topologyGroup, pathObject }) {
-  const { center, maxDim } = getContentCameraMetrics(mapObject, topologyGroup, pathObject);
+function fitCameraToContent({ camera, controls, mapObject, topologyGroup }) {
+  const { center, maxDim } = getContentCameraMetrics(mapObject, topologyGroup);
   const distance = maxDim * 1.25;
 
   applyCameraPose({
@@ -538,11 +394,11 @@ function fitCameraToContent({ camera, controls, mapObject, topologyGroup, pathOb
   });
 }
 
-function applyViewFace({ face, camera, controls, mapObject, topologyGroup, pathObject }) {
+function applyViewFace({ face, camera, controls, mapObject, topologyGroup }) {
   const preset = VIEW_FACE_PRESETS[face];
   if (!preset) return;
 
-  const { center, maxDim } = getContentCameraMetrics(mapObject, topologyGroup, pathObject);
+  const { center, maxDim } = getContentCameraMetrics(mapObject, topologyGroup);
   const distance = maxDim * 1.35;
 
   applyCameraPose({
@@ -562,10 +418,6 @@ export default function TopologyViewer({
   backgroundColor,
   pointCloudColor,
   pointCloudSize,
-  clippingRange,
-  pickedPoint,
-  pathData,
-  pathColor,
   selectedNodeId,
   selectedEdgeKey,
   selectedTempPointKey,
@@ -581,8 +433,6 @@ export default function TopologyViewer({
   onTempPointMoveStart,
   onTempPointMoveEnd,
   onAddNodeAt,
-  onMapPointPick,
-  onPickedPointContextMenu,
 }) {
   const containerRef = useRef(null);
   const sceneRef = useRef(null);
@@ -590,8 +440,6 @@ export default function TopologyViewer({
   const rendererRef = useRef(null);
   const controlsRef = useRef(null);
   const mapObjectRef = useRef(null);
-  const pickedPointMarkerRef = useRef(null);
-  const pathOverlayRef = useRef(null);
   const topologyGroupRef = useRef(new THREE.Group());
   const nodeMeshesRef = useRef([]);
   const tempPointMeshesRef = useRef([]);
@@ -600,8 +448,6 @@ export default function TopologyViewer({
   const dragRef = useRef(null);
   const propsRef = useRef({
     addNodeMode,
-    clippingRange,
-    pickedPoint,
     topology,
     spacing,
     onNodeSelect,
@@ -613,15 +459,11 @@ export default function TopologyViewer({
     onTempPointMoveStart,
     onTempPointMoveEnd,
     onAddNodeAt,
-    onMapPointPick,
-    onPickedPointContextMenu,
   });
 
   useEffect(() => {
     propsRef.current = {
       addNodeMode,
-      clippingRange,
-      pickedPoint,
       topology,
       spacing,
       onNodeSelect,
@@ -633,13 +475,9 @@ export default function TopologyViewer({
       onTempPointMoveStart,
       onTempPointMoveEnd,
       onAddNodeAt,
-      onMapPointPick,
-      onPickedPointContextMenu,
     };
   }, [
     addNodeMode,
-    clippingRange,
-    pickedPoint,
     topology,
     spacing,
     onNodeSelect,
@@ -651,8 +489,6 @@ export default function TopologyViewer({
     onTempPointMoveStart,
     onTempPointMoveEnd,
     onAddNodeAt,
-    onMapPointPick,
-    onPickedPointContextMenu,
   ]);
 
   useEffect(() => {
@@ -675,7 +511,6 @@ export default function TopologyViewer({
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(container.clientWidth || 1, container.clientHeight || 1);
-    renderer.localClippingEnabled = true;
     rendererRef.current = renderer;
     container.appendChild(renderer.domElement);
 
@@ -811,37 +646,6 @@ export default function TopologyViewer({
       }
     };
 
-    const doubleClick = (event) => {
-      const mapObject = mapObjectRef.current;
-      if (!mapObject || propsRef.current.addNodeMode) return;
-      const pickedVertex = getNearestScreenPoint(
-        mapObject,
-        event,
-        camera,
-        renderer.domElement,
-        propsRef.current.clippingRange,
-      );
-      if (!pickedVertex) return;
-      propsRef.current.onMapPointPick?.(pickedVertex);
-    };
-
-    const contextMenu = (event) => {
-      const pickedPoint = propsRef.current.pickedPoint;
-      if (!pickedPoint) return;
-      const rect = renderer.domElement.getBoundingClientRect();
-      const projected = new THREE.Vector3(pickedPoint.x, pickedPoint.y, pickedPoint.z).project(camera);
-      if (projected.z < -1 || projected.z > 1) return;
-      const screenX = ((projected.x + 1) / 2) * rect.width;
-      const screenY = ((1 - projected.y) / 2) * rect.height;
-      const distance = Math.hypot((event.clientX - rect.left) - screenX, (event.clientY - rect.top) - screenY);
-      if (distance > 12) return;
-      event.preventDefault();
-      propsRef.current.onPickedPointContextMenu?.({
-        clientX: event.clientX,
-        clientY: event.clientY,
-      });
-    };
-
     const pointerMove = (event) => {
       if (!dragRef.current) return;
       setPointer(event);
@@ -890,8 +694,6 @@ export default function TopologyViewer({
     renderer.domElement.addEventListener('pointermove', pointerMove);
     renderer.domElement.addEventListener('pointerup', pointerUp);
     renderer.domElement.addEventListener('pointercancel', pointerUp);
-    renderer.domElement.addEventListener('dblclick', doubleClick);
-    renderer.domElement.addEventListener('contextmenu', contextMenu);
 
     const resizeObserver = new ResizeObserver(() => {
       const width = container.clientWidth || 1;
@@ -917,13 +719,9 @@ export default function TopologyViewer({
       renderer.domElement.removeEventListener('pointermove', pointerMove);
       renderer.domElement.removeEventListener('pointerup', pointerUp);
       renderer.domElement.removeEventListener('pointercancel', pointerUp);
-      renderer.domElement.removeEventListener('dblclick', doubleClick);
-      renderer.domElement.removeEventListener('contextmenu', contextMenu);
       controls.dispose();
       disposeObject(topologyGroup);
       if (mapObjectRef.current) disposeObject(mapObjectRef.current);
-      if (pickedPointMarkerRef.current) disposeObject(pickedPointMarkerRef.current);
-      if (pathOverlayRef.current) disposeObject(pathOverlayRef.current);
       scene.clear();
       renderer.dispose();
       renderer.domElement.remove();
@@ -949,53 +747,11 @@ export default function TopologyViewer({
       const mapObject = makePointCloud(mapData, {
         color: pointCloudColor,
         size: pointCloudSize,
-        clippingPlanes: makeClippingPlanes(clippingRange),
       });
       mapObjectRef.current = mapObject;
       scene.add(mapObject);
     }
   }, [mapData, pointCloudColor, pointCloudSize]);
-
-  useEffect(() => {
-    const mapObject = mapObjectRef.current;
-    if (!mapObject?.material) return;
-    mapObject.material.clippingPlanes = makeClippingPlanes(clippingRange);
-    mapObject.material.needsUpdate = true;
-  }, [clippingRange]);
-
-  useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    if (pickedPointMarkerRef.current) {
-      scene.remove(pickedPointMarkerRef.current);
-      disposeObject(pickedPointMarkerRef.current);
-      pickedPointMarkerRef.current = null;
-    }
-
-    if (!pickedPoint) return;
-
-    const marker = makePickedPointMarker(pickedPoint);
-    pickedPointMarkerRef.current = marker;
-    scene.add(marker);
-  }, [pickedPoint]);
-
-  useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    if (pathOverlayRef.current) {
-      scene.remove(pathOverlayRef.current);
-      disposeObject(pathOverlayRef.current);
-      pathOverlayRef.current = null;
-    }
-
-    if (pathData?.positions?.length) {
-      const overlay = makePathOverlay(pathData, pathColor);
-      pathOverlayRef.current = overlay;
-      scene.add(overlay);
-    }
-  }, [pathData, pathColor]);
 
   useEffect(() => {
     const topologyGroup = topologyGroupRef.current;
@@ -1039,7 +795,6 @@ export default function TopologyViewer({
         controls: controlsRef.current,
         mapObject: mapObjectRef.current,
         topologyGroup: topologyGroupRef.current,
-        pathObject: pathOverlayRef.current,
       });
     });
   }, [fitNonce]);
@@ -1053,7 +808,6 @@ export default function TopologyViewer({
         controls: controlsRef.current,
         mapObject: mapObjectRef.current,
         topologyGroup: topologyGroupRef.current,
-        pathObject: pathOverlayRef.current,
       });
     });
   }, [viewFaceRequest]);
