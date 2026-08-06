@@ -41,7 +41,8 @@
     "publish": {
       "provider": "github",
       "owner": "gerhardt-1024",
-      "repo": "topology_path_editor"
+      "repo": "topology_path_editor",
+      "releaseType": "release"
     },
     "files": [
       "dist/**/*",
