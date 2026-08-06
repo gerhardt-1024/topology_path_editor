@@ -91,6 +91,27 @@ function roundRect(context, x, y, width, height, radius) {
   context.closePath();
 }
 
+const CROSS_SECTION_AXIS_NORMALS = {
+  x: new THREE.Vector3(1, 0, 0),
+  y: new THREE.Vector3(0, 1, 0),
+  z: new THREE.Vector3(0, 0, 1),
+};
+
+function buildClippingPlanes(crossSection) {
+  if (!crossSection) return [];
+  const planes = [];
+
+  ['x', 'y', 'z'].forEach((axis) => {
+    const section = crossSection[axis];
+    if (!section?.enabled) return;
+    const normal = CROSS_SECTION_AXIS_NORMALS[axis];
+    planes.push(new THREE.Plane(normal.clone(), -section.min));
+    planes.push(new THREE.Plane(normal.clone().negate(), section.max));
+  });
+
+  return planes;
+}
+
 function makePointCloud(mapData, pointCloudStyle = {}) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(mapData.positions, 3));
@@ -103,6 +124,7 @@ function makePointCloud(mapData, pointCloudStyle = {}) {
     transparent: true,
     opacity: 0.82,
   });
+  material.clippingPlanes = buildClippingPlanes(pointCloudStyle.crossSection);
 
   const points = new THREE.Points(geometry, material);
   points.userData.kind = 'map';
@@ -418,6 +440,7 @@ export default function TopologyViewer({
   backgroundColor,
   pointCloudColor,
   pointCloudSize,
+  crossSection,
   selectedNodeId,
   selectedEdgeKey,
   selectedTempPointKey,
@@ -511,6 +534,7 @@ export default function TopologyViewer({
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(container.clientWidth || 1, container.clientHeight || 1);
+    renderer.localClippingEnabled = true;
     rendererRef.current = renderer;
     container.appendChild(renderer.domElement);
 
@@ -747,11 +771,18 @@ export default function TopologyViewer({
       const mapObject = makePointCloud(mapData, {
         color: pointCloudColor,
         size: pointCloudSize,
+        crossSection,
       });
       mapObjectRef.current = mapObject;
       scene.add(mapObject);
     }
   }, [mapData, pointCloudColor, pointCloudSize]);
+
+  useEffect(() => {
+    if (mapObjectRef.current?.material) {
+      mapObjectRef.current.material.clippingPlanes = buildClippingPlanes(crossSection);
+    }
+  }, [crossSection]);
 
   useEffect(() => {
     const topologyGroup = topologyGroupRef.current;

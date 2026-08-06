@@ -8,7 +8,9 @@ import {
   Empty,
   Input,
   InputNumber,
+  Segmented,
   Select,
+  Slider,
   Space,
   Switch,
   Tag,
@@ -38,6 +40,7 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import TopologyViewer from './components/TopologyViewer';
+import { useI18n } from './i18n';
 import { parseMapFile } from './helpers/fileLoaders';
 import { getTypeColor } from './helpers/colors';
 import {
@@ -78,13 +81,13 @@ const DEFAULT_POINT_CLOUD_SIZE = 0.035;
 const ROTATION_MODE_FIELD = 'rotation_mode';
 const MANUAL_ROTATION_MODE = 'manual';
 const BACKGROUND_PRESETS = ['#0f172a', '#111827', '#1f2937', '#ffffff', '#f8fafc'];
-const VIEW_FACE_OPTIONS = [
-  { value: 'top', label: 'Top', title: 'Top face (+Z)' },
-  { value: 'bottom', label: 'Bottom', title: 'Bottom face (-Z)' },
-  { value: 'front', label: 'Front', title: 'Front face (-Y)' },
-  { value: 'back', label: 'Back', title: 'Back face (+Y)' },
-  { value: 'left', label: 'Left', title: 'Left face (-X)' },
-  { value: 'right', label: 'Right', title: 'Right face (+X)' },
+const VIEW_FACE_KEYS = [
+  { value: 'top', labelKey: 'viewFaceTop', titleKey: 'viewFaceTopTitle' },
+  { value: 'bottom', labelKey: 'viewFaceBottom', titleKey: 'viewFaceBottomTitle' },
+  { value: 'front', labelKey: 'viewFaceFront', titleKey: 'viewFaceFrontTitle' },
+  { value: 'back', labelKey: 'viewFaceBack', titleKey: 'viewFaceBackTitle' },
+  { value: 'left', labelKey: 'viewFaceLeft', titleKey: 'viewFaceLeftTitle' },
+  { value: 'right', labelKey: 'viewFaceRight', titleKey: 'viewFaceRightTitle' },
 ];
 
 function cloneValue(value) {
@@ -140,6 +143,41 @@ function clampSpacing(value) {
 
 function clampPointCloudSize(value) {
   return Math.max(0.001, Math.min(1, Number(value) || DEFAULT_POINT_CLOUD_SIZE));
+}
+
+function computeAxisBounds(positions) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (let index = 0; index < positions.length; index += 3) {
+    const x = positions[index];
+    const y = positions[index + 1];
+    const z = positions[index + 2];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+
+  return {
+    x: [minX, maxX],
+    y: [minY, maxY],
+    z: [minZ, maxZ],
+  };
+}
+
+function makeDefaultCrossSection(bounds) {
+  return {
+    x: { enabled: false, min: bounds.x[0], max: bounds.x[1] },
+    y: { enabled: false, min: bounds.y[0], max: bounds.y[1] },
+    z: { enabled: false, min: bounds.z[0], max: bounds.z[1] },
+  };
 }
 
 function makeExportName(sourceName) {
@@ -446,6 +484,7 @@ function reverseRouteTopology(topology, spacing) {
 }
 
 export default function App() {
+  const { t, lang, setLang } = useI18n();
   const [topology, setTopology] = useState(blankTopology);
   const [mapData, setMapData] = useState(null);
   const [spacing, setSpacing] = useState(DEFAULT_SPACING);
@@ -456,6 +495,8 @@ export default function App() {
   const [pointCloudSize, setPointCloudSize] = useState(DEFAULT_POINT_CLOUD_SIZE);
   const [pointCloudColor, setPointCloudColor] = useState(DEFAULT_POINT_CLOUD_COLOR);
   const [pointCloudColorInput, setPointCloudColorInput] = useState(DEFAULT_POINT_CLOUD_COLOR);
+  const [mapBounds, setMapBounds] = useState(null);
+  const [crossSection, setCrossSection] = useState(null);
   const [activeViewFace, setActiveViewFace] = useState(null);
   const [viewFaceRequest, setViewFaceRequest] = useState({ face: null, nonce: 0 });
   const [newType, setNewType] = useState('');
@@ -471,7 +512,7 @@ export default function App() {
   const [jsonFileName, setJsonFileName] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyState, setHistoryState] = useState(() => ({
-    entries: [createHistoryEntry('Initial state', blankTopology, DEFAULT_SPACING, blankNodeTypes, blankNodeTypes[0])],
+    entries: [createHistoryEntry(t('initialState'), blankTopology, DEFAULT_SPACING, blankNodeTypes, blankNodeTypes[0])],
     cursor: 0,
   }));
 
@@ -569,6 +610,38 @@ export default function App() {
 
   const changePointCloudSize = (value) => {
     setPointCloudSize(clampPointCloudSize(value));
+  };
+
+  const toggleCrossSectionAxis = (axis, enabled) => {
+    setCrossSection((current) => (current ? { ...current, [axis]: { ...current[axis], enabled } } : current));
+  };
+
+  const changeCrossSectionRange = (axis, range) => {
+    setCrossSection((current) =>
+      current ? { ...current, [axis]: { ...current[axis], min: range[0], max: range[1] } } : current,
+    );
+  };
+
+  const changeCrossSectionBound = (axis, bound, value) => {
+    if (value === null || value === undefined || Number.isNaN(value)) return;
+    setCrossSection((current) => {
+      if (!current) return current;
+      const section = current[axis];
+      const next = { ...section, [bound]: value };
+      if (next.min > next.max) {
+        if (bound === 'min') next.max = next.min;
+        else next.min = next.max;
+      }
+      return { ...current, [axis]: next };
+    });
+  };
+
+  const resetCrossSectionAxis = (axis) => {
+    if (!mapBounds) return;
+    setCrossSection((current) => ({
+      ...current,
+      [axis]: { enabled: false, min: mapBounds[axis][0], max: mapBounds[axis][1] },
+    }));
   };
 
   const selectViewFace = (face) => {
@@ -685,7 +758,7 @@ export default function App() {
   const undoLast = () => {
     if (!canUndo) return;
     restoreHistoryIndex(historyState.cursor - 1);
-    message.success('Undone');
+    message.success(t('toastUndone'));
   };
 
   const handleMapFile = async (event) => {
@@ -694,12 +767,20 @@ export default function App() {
     if (!file) return;
 
     try {
-      message.loading({ content: `Loading ${file.name}`, key: 'map' });
+      message.loading({ content: t('toastLoadingFile', { name: file.name }), key: 'map' });
       const parsed = await parseMapFile(file);
       setMapData(parsed);
-      setMapStatus(`${parsed.name} - ${parsed.format} - ${parsed.sampledCount.toLocaleString()} / ${parsed.originalCount.toLocaleString()} points`);
+      const bounds = computeAxisBounds(parsed.positions);
+      setMapBounds(bounds);
+      setCrossSection(makeDefaultCrossSection(bounds));
+      setMapStatus(t('mapStatusLine', {
+        name: parsed.name,
+        format: parsed.format,
+        sampled: parsed.sampledCount.toLocaleString(),
+        original: parsed.originalCount.toLocaleString(),
+      }));
       setFitNonce((value) => value + 1);
-      message.success({ content: 'Map loaded', key: 'map' });
+      message.success({ content: t('toastMapLoaded'), key: 'map' });
     } catch (error) {
       message.error({ content: error.message, key: 'map' });
     }
@@ -718,7 +799,7 @@ export default function App() {
       const nextActiveType = discoveredTypes.includes(activeTypeRef.current)
         ? activeTypeRef.current
         : discoveredTypes[0] || 'waypoint';
-      commitEditorState(`Loaded ${file.name}`, withPaths, {
+      commitEditorState(t('toastLoadedFile', { name: file.name }), withPaths, {
         spacing: inferredSpacing,
         nodeTypes: discoveredTypes,
         activeType: nextActiveType,
@@ -729,7 +810,7 @@ export default function App() {
       setEdgeTo(withPaths.edges[0]?.to ?? withPaths.topology_nodes[1]?.id ?? null);
       setJsonFileName(file.name);
       setFitNonce((value) => value + 1);
-      message.success(`Loaded ${file.name}`);
+      message.success(t('toastLoadedFile', { name: file.name }));
     } catch (error) {
       message.error(error.message);
     }
@@ -813,9 +894,9 @@ export default function App() {
         spacingRef.current,
         getEdgeIndexesForNode(current.edges, nodeId),
       );
-      commitEditorState(`Moved node #${nodeId}`, next);
+      commitEditorState(t('historyMovedNode', { id: nodeId }), next);
     },
-    [commitEditorState],
+    [commitEditorState, t],
   );
 
   const beginTempPointMove = useCallback((key, pointIndex) => {
@@ -848,7 +929,7 @@ export default function App() {
       const edgeIndex = getEdgeIndexByKey(current.edges, key);
       if (edgeIndex < 0) return;
       if (isPathLocked(current.edges[edgeIndex])) {
-        message.warning('Unlock this edge before moving its temp points');
+        message.warning(t('toastUnlockBeforeMovingTempPoints'));
         return;
       }
 
@@ -869,9 +950,9 @@ export default function App() {
         [edgeIndex],
       );
 
-      commitEditorState(`Moved temp point ${pointIndex + 1}`, nextTopology);
+      commitEditorState(t('historyMovedTempPoint', { index: pointIndex + 1 }), nextTopology);
     },
-    [commitEditorState],
+    [commitEditorState, t],
   );
 
   const reorderNodesByDrag = (event, targetNodeId) => {
@@ -907,7 +988,7 @@ export default function App() {
     }));
 
     const nextTopology = remapTopologyNodeIds(current, nextNodes, idMap);
-    commitEditorState('Reordered nodes', nextTopology);
+    commitEditorState(t('historyReorderedNodes'), nextTopology);
     setSelectedNodeId(idMap.get(sourceNodeId));
     setSelectedEdgeKey(null);
     setSelectedTempPointKey(null);
@@ -946,7 +1027,7 @@ export default function App() {
       .sort((first, second) => Number(first.id) - Number(second.id));
 
     const nextTopology = remapTopologyNodeIds(current, nextNodes, idMap);
-    commitEditorState(`Changed node #${currentId} id to ${targetId}`, nextTopology);
+    commitEditorState(t('historyChangedNodeId', { oldId: currentId, newId: targetId }), nextTopology);
     setSelectedNodeId(targetId);
     setSelectedEdgeKey(null);
     setSelectedTempPointKey(null);
@@ -964,7 +1045,7 @@ export default function App() {
     const nextTopology = ['x', 'y', 'z'].includes(field)
       ? regenerateAffectedPaths(next, spacingRef.current, getEdgeIndexesForNode(current.edges, nodeId))
       : refreshTopologyMetadata(next, spacingRef.current);
-    commitEditorState(`Updated node #${nodeId} ${field}`, nextTopology);
+    commitEditorState(t('historyUpdatedNodeField', { id: nodeId, field }), nextTopology);
   };
 
   const updateNodeRotation = (nodeId, source, value) => {
@@ -984,7 +1065,7 @@ export default function App() {
       spacingRef.current,
     );
 
-    commitEditorState(`Updated node #${nodeId} rotation`, nextTopology);
+    commitEditorState(t('historyUpdatedNodeRotation', { id: nodeId }), nextTopology);
   };
 
   const updateNodeQuaternionComponent = (nodeId, componentIndex, value) => {
@@ -1009,7 +1090,7 @@ export default function App() {
       spacingRef.current,
     );
 
-    commitEditorState(`Reset node #${nodeId} rotation to path`, nextTopology);
+    commitEditorState(t('historyResetNodeRotation', { id: nodeId }), nextTopology);
   };
 
   const addNode = (position) => {
@@ -1062,7 +1143,7 @@ export default function App() {
       );
     }
 
-    commitEditorState(`Added node #${id}`, nextTopology);
+    commitEditorState(t('historyAddedNode', { id }), nextTopology);
     setSelectedNodeId(id);
     setSelectedEdgeKey(null);
     setSelectedTempPointKey(null);
@@ -1086,7 +1167,7 @@ export default function App() {
       },
       spacingRef.current,
     );
-    commitEditorState(`Deleted node #${selectedNodeId}`, nextTopology);
+    commitEditorState(t('historyDeletedNode', { id: selectedNodeId }), nextTopology);
     setSelectedNodeId(null);
     setSelectedEdgeKey(null);
     setSelectedTempPointKey(null);
@@ -1098,7 +1179,7 @@ export default function App() {
     const cleaned = newType.trim();
     if (!cleaned) return;
     const nextTypes = nodeTypesRef.current.includes(cleaned) ? nodeTypesRef.current : [...nodeTypesRef.current, cleaned];
-    commitEditorState(`Added type ${cleaned}`, topologyRef.current, {
+    commitEditorState(t('historyAddedType', { type: cleaned }), topologyRef.current, {
       nodeTypes: nextTypes,
       activeType: cleaned,
     });
@@ -1106,14 +1187,14 @@ export default function App() {
   };
 
   const changeActiveType = (value) => {
-    commitEditorState(`Changed default type to ${value}`, topologyRef.current, {
+    commitEditorState(t('historyChangedDefaultType', { type: value }), topologyRef.current, {
       activeType: value,
     });
   };
 
   const deleteType = (type) => {
     if (nodeTypesRef.current.length <= 1) {
-      message.warning('At least one type is required');
+      message.warning(t('toastAtLeastOneTypeRequired'));
       return;
     }
 
@@ -1130,7 +1211,7 @@ export default function App() {
       spacingRef.current,
     );
 
-    commitEditorState(`Deleted type ${type}`, nextTopology, {
+    commitEditorState(t('historyDeletedType', { type }), nextTopology, {
       nodeTypes: nextTypes,
       activeType: fallbackType,
     });
@@ -1139,22 +1220,22 @@ export default function App() {
   const changeSpacing = (value) => {
     const nextSpacing = clampSpacing(value);
     const nextTopology = regenerateAllPaths(topologyRef.current, nextSpacing);
-    commitEditorState(`Changed spacing to ${nextSpacing.toFixed(2)}m`, nextTopology, {
+    commitEditorState(t('historyChangedSpacing', { spacing: nextSpacing.toFixed(2) }), nextTopology, {
       spacing: nextSpacing,
     });
   };
 
   const regeneratePaths = () => {
     const nextTopology = regenerateAllPaths(topologyRef.current, spacingRef.current);
-    commitEditorState('Regenerated paths', nextTopology);
+    commitEditorState(t('historyRegeneratedPaths'), nextTopology);
     const lockedCount = topologyRef.current.edges.filter((edge) => isPathLocked(edge)).length;
-    message.success(lockedCount ? 'Unlocked paths regenerated; locked edges preserved' : 'Paths regenerated');
+    message.success(lockedCount ? t('toastUnlockedPathsRegenerated') : t('toastPathsRegenerated'));
   };
 
   const reverseRoute = () => {
     const current = topologyRef.current;
     if ((current.topology_nodes?.length || 0) <= 1 && !(current.edges || []).length) {
-      message.warning('Load or create a route before reversing it');
+      message.warning(t('toastLoadRouteBeforeReversing'));
       return;
     }
 
@@ -1168,19 +1249,19 @@ export default function App() {
       : null;
     const firstEdge = nextTopology.edges[0];
 
-    commitEditorState('Reversed route', nextTopology);
+    commitEditorState(t('historyReversedRoute'), nextTopology);
     setSelectedEdgeKey(nextSelectedEdge ? edgeKey(nextSelectedEdge, nextSelectedEdgeIndex) : null);
     setSelectedTempPointKey(null);
     setEdgeFrom(nextSelectedEdge?.from ?? firstEdge?.from ?? nextTopology.topology_nodes[0]?.id ?? null);
     setEdgeTo(nextSelectedEdge?.to ?? firstEdge?.to ?? nextTopology.topology_nodes[1]?.id ?? null);
     setAddNodeMode(false);
-    message.success('Route direction reversed');
+    message.success(t('toastRouteReversed'));
   };
 
   const regenerateSelectedEdge = () => {
     if (!selectedEdge) return;
     if (selectedEdgeLocked) {
-      message.warning('Unlock this edge before regenerating it');
+      message.warning(t('toastUnlockBeforeRegenerating'));
       return;
     }
 
@@ -1189,8 +1270,8 @@ export default function App() {
     if (edgeIndex < 0) return;
 
     const nextTopology = regenerateAffectedPaths(current, spacingRef.current, [edgeIndex]);
-    commitEditorState(`Regenerated edge ${selectedEdge.from}->${selectedEdge.to}`, nextTopology);
-    message.success('Edge regenerated');
+    commitEditorState(t('historyRegeneratedEdge', { from: selectedEdge.from, to: selectedEdge.to }), nextTopology);
+    message.success(t('toastEdgeRegenerated'));
   };
 
   const toggleSelectedEdgeLock = (checked) => {
@@ -1210,7 +1291,7 @@ export default function App() {
     );
 
     commitEditorState(
-      `${checked ? 'Locked' : 'Unlocked'} edge ${selectedEdge.from}->${selectedEdge.to}`,
+      t(checked ? 'historyLockedEdge' : 'historyUnlockedEdge', { from: selectedEdge.from, to: selectedEdge.to }),
       nextTopology,
     );
   };
@@ -1224,7 +1305,7 @@ export default function App() {
         (Number(edge.from) === Number(edgeTo) && Number(edge.to) === Number(edgeFrom)),
     );
     if (exists) {
-      message.warning('That edge already exists');
+      message.warning(t('toastEdgeAlreadyExists'));
       return;
     }
 
@@ -1239,7 +1320,7 @@ export default function App() {
       spacingRef.current,
       [nextIndex],
     );
-    commitEditorState(`Added edge ${edgeFrom}->${edgeTo}`, nextTopology);
+    commitEditorState(t('historyAddedEdge', { from: edgeFrom, to: edgeTo }), nextTopology);
     setSelectedEdgeKey(edgeKey(nextEdge, nextIndex));
     setSelectedNodeId(null);
     setSelectedTempPointKey(null);
@@ -1255,7 +1336,7 @@ export default function App() {
       },
       spacingRef.current,
     );
-    commitEditorState(`Deleted edge ${selectedEdge.from}->${selectedEdge.to}`, nextTopology);
+    commitEditorState(t('historyDeletedEdge', { from: selectedEdge.from, to: selectedEdge.to }), nextTopology);
     setSelectedEdgeKey(null);
     setSelectedTempPointKey(null);
   };
@@ -1263,7 +1344,7 @@ export default function App() {
   const updatePathPoint = (pointIndex, field, value) => {
     if (!selectedEdge) return;
     if (selectedEdgeLocked) {
-      message.warning('Unlock this edge before editing path points');
+      message.warning(t('toastUnlockBeforeEditingPathPoints'));
       return;
     }
     const current = topologyRef.current;
@@ -1282,13 +1363,13 @@ export default function App() {
       },
       spacingRef.current,
     );
-    commitEditorState(`Edited path point ${pointIndex + 1}`, nextTopology);
+    commitEditorState(t('historyEditedPathPoint', { index: pointIndex + 1 }), nextTopology);
   };
 
   const updatePathPointRotation = (pointIndex, source, value) => {
     if (!selectedEdge) return;
     if (selectedEdgeLocked) {
-      message.warning('Unlock this edge before editing path point rotations');
+      message.warning(t('toastUnlockBeforeEditingPathPointRotations'));
       return;
     }
     const current = topologyRef.current;
@@ -1307,7 +1388,7 @@ export default function App() {
       },
       spacingRef.current,
     );
-    commitEditorState(`Edited path point ${pointIndex + 1} rotation`, nextTopology);
+    commitEditorState(t('historyEditedPathPointRotation', { index: pointIndex + 1 }), nextTopology);
   };
 
   const updatePathPointQuaternionComponent = (pointIndex, componentIndex, value) => {
@@ -1321,7 +1402,7 @@ export default function App() {
   const insertPathPoint = () => {
     if (!selectedEdge) return;
     if (selectedEdgeLocked) {
-      message.warning('Unlock this edge before adding path points');
+      message.warning(t('toastUnlockBeforeAddingPathPoints'));
       return;
     }
     const points = selectedEdge.path_points || [];
@@ -1349,16 +1430,16 @@ export default function App() {
       },
       spacingRef.current,
     );
-    commitEditorState('Inserted path point', nextTopology);
+    commitEditorState(t('historyInsertedPathPoint'), nextTopology);
   };
 
   const addTemporaryPoint = () => {
     if (!selectedEdge) {
-      message.warning('Select an edge first');
+      message.warning(t('toastSelectEdgeFirst'));
       return;
     }
     if (selectedEdgeLocked) {
-      message.warning('Unlock this edge before adding temp points');
+      message.warning(t('toastUnlockBeforeAddingTempPoints'));
       return;
     }
 
@@ -1398,7 +1479,7 @@ export default function App() {
       [edgeIndex],
     );
 
-    commitEditorState(`Added temp point to edge ${edge.from}->${edge.to}`, nextTopology);
+    commitEditorState(t('historyAddedTempPoint', { from: edge.from, to: edge.to }), nextTopology);
     const nextEdge = nextTopology.edges[edgeIndex];
     const nextPointIndex = getTemporaryPoints(nextEdge).length - 1;
     setSelectedTempPointKey(temporaryPointKey(nextEdge, edgeIndex, nextPointIndex));
@@ -1409,7 +1490,7 @@ export default function App() {
   const updateTemporaryPointField = (pointIndex, field, value) => {
     if (!selectedEdge) return;
     if (selectedEdgeLocked) {
-      message.warning('Unlock this edge before editing temp points');
+      message.warning(t('toastUnlockBeforeEditingTempPoints'));
       return;
     }
     const current = topologyRef.current;
@@ -1433,13 +1514,13 @@ export default function App() {
       [edgeIndex],
     );
 
-    commitEditorState(`Edited temp point ${pointIndex + 1}`, nextTopology);
+    commitEditorState(t('historyEditedTempPoint', { index: pointIndex + 1 }), nextTopology);
   };
 
   const deleteTemporaryPoint = (pointIndex) => {
     if (!selectedEdge) return;
     if (selectedEdgeLocked) {
-      message.warning('Unlock this edge before deleting temp points');
+      message.warning(t('toastUnlockBeforeDeletingTempPoints'));
       return;
     }
     const current = topologyRef.current;
@@ -1459,14 +1540,14 @@ export default function App() {
       [edgeIndex],
     );
 
-    commitEditorState(`Deleted temp point ${pointIndex + 1}`, nextTopology);
+    commitEditorState(t('historyDeletedTempPoint', { index: pointIndex + 1 }), nextTopology);
     setSelectedTempPointKey(null);
   };
 
   const deletePathPoint = (pointIndex) => {
     if (!selectedEdge || selectedEdge.path_points.length <= 1) return;
     if (selectedEdgeLocked) {
-      message.warning('Unlock this edge before deleting path points');
+      message.warning(t('toastUnlockBeforeDeletingPathPoints'));
       return;
     }
     const current = topologyRef.current;
@@ -1481,13 +1562,13 @@ export default function App() {
       },
       spacingRef.current,
     );
-    commitEditorState(`Deleted path point ${pointIndex + 1}`, nextTopology);
+    commitEditorState(t('historyDeletedPathPoint', { index: pointIndex + 1 }), nextTopology);
   };
 
   const convertPathPointToTopologyNode = (pointIndex) => {
     if (!selectedEdge) return;
     if (selectedEdgeLocked) {
-      message.warning('Unlock this edge before converting path points');
+      message.warning(t('toastUnlockBeforeConvertingPathPoints'));
       return;
     }
 
@@ -1496,7 +1577,7 @@ export default function App() {
     const edge = current.edges[edgeIndex];
     const pathPoints = edge?.path_points || [];
     if (edgeIndex < 0 || pointIndex <= 0 || pointIndex >= pathPoints.length - 1) {
-      message.warning('Only inner path points can be converted to topo points');
+      message.warning(t('toastOnlyInnerPathPointsConvertible'));
       return;
     }
 
@@ -1540,7 +1621,7 @@ export default function App() {
       spacingRef.current,
     );
 
-    commitEditorState(`Converted path point ${pointIndex + 1} to topo point #${newNodeId}`, nextTopology);
+    commitEditorState(t('historyConvertedPathPointToTopo', { index: pointIndex + 1, id: newNodeId }), nextTopology);
     setSelectedNodeId(newNodeId);
     setSelectedEdgeKey(null);
     setSelectedTempPointKey(null);
@@ -1555,11 +1636,11 @@ export default function App() {
     const currentNode = current.topology_nodes.find((node) => Number(node.id) === Number(selectedNode.id));
     const connectedEdges = getConnectedEdgeEntries(current.edges, selectedNode.id);
     if (!currentNode || connectedEdges.length !== 2) {
-      message.warning('A topo point must have exactly two connected edges before it can become a path point');
+      message.warning(t('toastTopoPointNeedsTwoEdges'));
       return;
     }
     if (connectedEdges.some(({ edge }) => isPathLocked(edge))) {
-      message.warning('Unlock the connected edges before converting this topo point');
+      message.warning(t('toastUnlockConnectedEdgesBeforeConverting'));
       return;
     }
 
@@ -1571,7 +1652,7 @@ export default function App() {
     const firstNeighborId = firstSegment.neighborId;
     const secondNeighborId = secondSegment.neighborId;
     if (firstNeighborId === null || secondNeighborId === null || Number(firstNeighborId) === Number(secondNeighborId)) {
-      message.warning('The selected topo point cannot be converted with its current edge connections');
+      message.warning(t('toastCannotConvertCurrentConnections'));
       return;
     }
 
@@ -1580,7 +1661,7 @@ export default function App() {
       !removeIndexes.has(index) && isSameUndirectedEdge(edge, firstNeighborId, secondNeighborId),
     );
     if (hasDuplicateMergedEdge) {
-      message.warning('A direct edge between the neighboring topo points already exists');
+      message.warning(t('toastDirectEdgeAlreadyExists'));
       return;
     }
 
@@ -1623,7 +1704,7 @@ export default function App() {
       spacingRef.current,
     );
 
-    commitEditorState(`Converted topo point #${currentNode.id} to path point`, nextTopology);
+    commitEditorState(t('historyConvertedTopoToPathPoint', { id: currentNode.id }), nextTopology);
     setSelectedNodeId(null);
     setSelectedTempPointKey(null);
     setSelectedEdgeKey(mergedEdgeIndex >= 0 ? edgeKey(nextTopology.edges[mergedEdgeIndex], mergedEdgeIndex) : null);
@@ -1633,7 +1714,7 @@ export default function App() {
 
   const exportJson = () => {
     downloadTopologyJson(topology, spacing, makeExportName(jsonFileName));
-    message.success('Topology JSON exported');
+    message.success(t('toastTopologyExported'));
   };
 
   return (
@@ -1642,16 +1723,25 @@ export default function App() {
         <div className="brand-row">
           <div>
             <h1>Topology Path Editor</h1>
-            <p>{topology.topology_nodes.length} nodes - {topology.edges.length} edges</p>
+            <p>{t('subtitleNodesEdges', { nodes: topology.topology_nodes.length, edges: topology.edges.length })}</p>
           </div>
           <div className="brand-actions">
-            <Tooltip title="Undo">
+            <Segmented
+              size="small"
+              value={lang}
+              onChange={setLang}
+              options={[
+                { label: 'EN', value: 'en' },
+                { label: '中文', value: 'zh' },
+              ]}
+            />
+            <Tooltip title={t('tooltipUndo')}>
               <Button shape="circle" icon={<Undo2 size={16} />} onClick={undoLast} disabled={!canUndo} />
             </Tooltip>
-            <Tooltip title="History">
+            <Tooltip title={t('tooltipHistory')}>
               <Button shape="circle" icon={<HistoryIcon size={16} />} onClick={() => setHistoryOpen(true)} />
             </Tooltip>
-            <Tooltip title="Fit view">
+            <Tooltip title={t('tooltipFitView')}>
               <Button
                 shape="circle"
                 icon={<Focus size={16} />}
@@ -1664,8 +1754,8 @@ export default function App() {
         <section className="panel-section compact-section">
           <div className="history-current">
             <div>
-              <span className="field-label">Current step</span>
-              <strong>{currentHistoryEntry?.label || 'Initial state'}</strong>
+              <span className="field-label">{t('currentStepLabel')}</span>
+              <strong>{currentHistoryEntry?.label || t('initialState')}</strong>
             </div>
             <span>{historyState.cursor + 1}/{historyState.entries.length}</span>
           </div>
@@ -1674,14 +1764,14 @@ export default function App() {
         <section className="panel-section">
           <div className="section-title">
             <MapIcon size={16} />
-            <span>Files</span>
+            <span>{t('sectionFiles')}</span>
           </div>
           <Space.Compact block>
             <Button block icon={<UploadCloud size={16} />} onClick={() => mapInputRef.current?.click()}>
-              Load Map
+              {t('buttonLoadMap')}
             </Button>
             <Button block icon={<FileJson size={16} />} onClick={() => jsonInputRef.current?.click()}>
-              Load JSON
+              {t('buttonLoadJson')}
             </Button>
           </Space.Compact>
           <input data-testid="map-input" ref={mapInputRef} hidden type="file" accept=".pcd,.ply,.xyz,.txt,.csv" onChange={handleMapFile} />
@@ -1689,16 +1779,16 @@ export default function App() {
           {mapStatus ? <div className="status-line">{mapStatus}</div> : null}
           {jsonFileName ? <div className="status-line">{jsonFileName}</div> : null}
           <Button type="primary" block icon={<Download size={16} />} onClick={exportJson}>
-            Export JSON
+            {t('buttonExportJson')}
           </Button>
         </section>
 
         <section className="panel-section">
           <div className="section-title">
             <Palette size={16} />
-            <span>Appearance</span>
+            <span>{t('sectionAppearance')}</span>
           </div>
-          <label className="field-label">Background</label>
+          <label className="field-label">{t('labelBackground')}</label>
           <div className="background-row">
             <ColorPicker
               value={backgroundColor}
@@ -1720,15 +1810,15 @@ export default function App() {
                   className={`background-swatch ${backgroundColor === color ? 'is-active' : ''}`}
                   style={{ backgroundColor: color }}
                   onClick={() => applyBackgroundColor(color)}
-                  aria-label={`Set background ${color}`}
+                  aria-label={t('ariaSetBackground', { color })}
                 />
               </Tooltip>
             ))}
           </div>
-          <label className="field-label">Point cloud</label>
+          <label className="field-label">{t('labelPointCloud')}</label>
           <div className="point-cloud-controls">
             <label>
-              <span>Size</span>
+              <span>{t('labelSize')}</span>
               <InputNumber
                 min={0.001}
                 max={1}
@@ -1739,7 +1829,7 @@ export default function App() {
               />
             </label>
             <label>
-              <span>Color</span>
+              <span>{t('labelColor')}</span>
               <div className="background-row">
                 <ColorPicker
                   value={pointCloudColor}
@@ -1755,20 +1845,84 @@ export default function App() {
               </div>
             </label>
           </div>
-          <label className="field-label">Viewpoint</label>
-          <div className="view-face-grid" role="group" aria-label="Cube face viewpoint">
-            {VIEW_FACE_OPTIONS.map((option) => (
-              <Tooltip key={option.value} title={option.title}>
+          <label className="field-label">{t('labelViewpoint')}</label>
+          <div className="view-face-grid" role="group" aria-label={t('ariaCubeFaceViewpoint')}>
+            {VIEW_FACE_KEYS.map((option) => (
+              <Tooltip key={option.value} title={t(option.titleKey)}>
                 <Button
                   size="small"
                   type={activeViewFace === option.value ? 'primary' : 'default'}
                   onClick={() => selectViewFace(option.value)}
                 >
-                  {option.label}
+                  {t(option.labelKey)}
                 </Button>
               </Tooltip>
             ))}
           </div>
+          <label className="field-label">{t('sectionCrossSection')}</label>
+          {mapBounds && crossSection ? (
+            <div className="cross-section-grid">
+              {['x', 'y', 'z'].map((axis) => {
+                const [boundMin, boundMax] = mapBounds[axis];
+                const section = crossSection[axis];
+                const step = Math.max(0.001, (boundMax - boundMin) / 200);
+                return (
+                  <div className="cross-section-row" key={axis}>
+                    <div className="cross-section-row-header">
+                      <Switch
+                        size="small"
+                        checked={section.enabled}
+                        onChange={(checked) => toggleCrossSectionAxis(axis, checked)}
+                      />
+                      <span className="cross-section-axis-label">{axis.toUpperCase()}</span>
+                      <Tooltip title={t('tooltipResetCrossSectionAxis')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<RefreshCw size={13} />}
+                          onClick={() => resetCrossSectionAxis(axis)}
+                        />
+                      </Tooltip>
+                    </div>
+                    <Slider
+                      range
+                      min={boundMin}
+                      max={boundMax}
+                      step={step}
+                      value={[section.min, section.max]}
+                      disabled={!section.enabled}
+                      onChange={(value) => changeCrossSectionRange(axis, value)}
+                      tooltip={{ formatter: (value) => value?.toFixed(2) }}
+                    />
+                    <div className="cross-section-bounds">
+                      <InputNumber
+                        size="small"
+                        min={boundMin}
+                        max={section.max}
+                        step={0.05}
+                        precision={3}
+                        value={section.min}
+                        disabled={!section.enabled}
+                        onChange={(value) => changeCrossSectionBound(axis, 'min', value)}
+                      />
+                      <InputNumber
+                        size="small"
+                        min={section.min}
+                        max={boundMax}
+                        step={0.05}
+                        precision={3}
+                        value={section.max}
+                        disabled={!section.enabled}
+                        onChange={(value) => changeCrossSectionBound(axis, 'max', value)}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty-inline">{t('crossSectionHint')}</div>
+          )}
         </section>
 
         <Divider />
@@ -1776,9 +1930,9 @@ export default function App() {
         <section className="panel-section">
           <div className="section-title">
             <Route size={16} />
-            <span>Path Generation</span>
+            <span>{t('sectionPathGeneration')}</span>
           </div>
-          <label className="field-label">Spacing</label>
+          <label className="field-label">{t('labelSpacing')}</label>
           <Space.Compact block>
             <InputNumber
               min={0.01}
@@ -1789,10 +1943,10 @@ export default function App() {
               onChange={changeSpacing}
               className="full-input"
             />
-            <Tooltip title="Regenerate unlocked paths">
+            <Tooltip title={t('tooltipRegenerateUnlocked')}>
               <Button icon={<RefreshCw size={16} />} onClick={regeneratePaths} />
             </Tooltip>
-            <Tooltip title="Reverse route direction">
+            <Tooltip title={t('tooltipReverseRoute')}>
               <Button
                 icon={<ArrowRightLeft size={16} />}
                 onClick={reverseRoute}
@@ -1805,12 +1959,12 @@ export default function App() {
         <section className="panel-section">
           <div className="section-title">
             <MousePointer2 size={16} />
-            <span>Types</span>
+            <span>{t('sectionTypes')}</span>
           </div>
-          <label className="field-label">Default type</label>
+          <label className="field-label">{t('labelDefaultType')}</label>
           <Select value={activeType} options={typeOptions} onChange={changeActiveType} className="full-input" />
           <Space.Compact block>
-            <Input value={newType} onChange={(event) => setNewType(event.target.value)} onPressEnter={addType} placeholder="new type" />
+            <Input value={newType} onChange={(event) => setNewType(event.target.value)} onPressEnter={addType} placeholder={t('placeholderNewType')} />
             <Button icon={<Plus size={16} />} onClick={addType} />
           </Space.Compact>
           <div className="type-cloud">
@@ -1833,13 +1987,13 @@ export default function App() {
         <section className="panel-section">
           <div className="section-title">
             <Plus size={16} />
-            <span>Nodes</span>
+            <span>{t('sectionNodes')}</span>
           </div>
           <Space.Compact block>
             <Button block icon={<Plus size={16} />} onClick={() => addNode()}>
-              Add Node
+              {t('buttonAddNode')}
             </Button>
-            <Tooltip title="Place node on map">
+            <Tooltip title={t('tooltipPlaceNodeOnMap')}>
               <Button
                 type={addNodeMode ? 'primary' : 'default'}
                 icon={<MousePointer2 size={16} />}
@@ -1847,7 +2001,7 @@ export default function App() {
               />
             </Tooltip>
             <Button danger icon={<Trash2 size={16} />} onClick={deleteSelectedNode} disabled={!selectedNode}>
-              Delete
+              {t('buttonDelete')}
             </Button>
           </Space.Compact>
           <div className="list-box node-list">
@@ -1885,7 +2039,7 @@ export default function App() {
                 </button>
               ))
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No nodes" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('emptyNoNodes')} />
             )}
           </div>
         </section>
@@ -1894,9 +2048,9 @@ export default function App() {
           <section className="panel-section compact-section">
             <div className="section-title">
               <MousePointer2 size={16} />
-              <span>Selected Node #{selectedNode.id}</span>
+              <span>{t('sectionSelectedNode', { id: selectedNode.id })}</span>
             </div>
-            <label className="field-label">Node ID</label>
+            <label className="field-label">{t('labelNodeId')}</label>
             <InputNumber
               min={0}
               step={1}
@@ -1919,8 +2073,8 @@ export default function App() {
               ))}
             </div>
             <div className="rotation-section-heading">
-              <div className="subsection-title">Rotation Z</div>
-              <Tooltip title="Use path direction">
+              <div className="subsection-title">{t('subsectionRotationZ')}</div>
+              <Tooltip title={t('tooltipUsePathDirection')}>
                 <Button
                   shape="circle"
                   size="small"
@@ -1932,7 +2086,7 @@ export default function App() {
             </div>
             <div className="rotation-value-grid">
               <label>
-                <span>Angle (deg)</span>
+                <span>{t('labelAngleDeg')}</span>
                 <InputNumber
                   value={getRotationField(selectedNode, 'angle')}
                   step={1}
@@ -1941,7 +2095,7 @@ export default function App() {
                 />
               </label>
               <label>
-                <span>Radian (rad)</span>
+                <span>{t('labelRadianRad')}</span>
                 <InputNumber
                   value={getRotationField(selectedNode, 'radian')}
                   step={0.05}
@@ -1963,7 +2117,7 @@ export default function App() {
                 </label>
               ))}
             </div>
-            <label className="field-label">Type</label>
+            <label className="field-label">{t('labelType')}</label>
             <Select
               value={selectedNode.type}
               options={typeOptions}
@@ -1973,10 +2127,10 @@ export default function App() {
             <Tooltip
               title={
                 selectedNodeHasLockedEdges
-                  ? 'Unlock connected edges first'
+                  ? t('tooltipUnlockConnectedEdgesFirst')
                   : selectedNodeConnectedEdges.length === 2
-                    ? 'Convert this topo point into a normal path point'
-                    : 'Requires exactly two connected edges'
+                    ? t('tooltipConvertTopoToPathPoint')
+                    : t('tooltipRequiresTwoEdges')
               }
             >
               <Button
@@ -1985,7 +2139,7 @@ export default function App() {
                 onClick={convertSelectedNodeToPathPoint}
                 disabled={!canConvertSelectedNodeToPathPoint}
               >
-                Convert to Path Point
+                {t('buttonConvertToPathPoint')}
               </Button>
             </Tooltip>
           </section>
@@ -1994,11 +2148,11 @@ export default function App() {
         <section className="panel-section">
           <div className="section-title">
             <Link2 size={16} />
-            <span>Edges</span>
+            <span>{t('sectionEdges')}</span>
           </div>
           <div className="edge-create">
-            <Select value={edgeFrom} options={nodeOptions} onChange={setEdgeFrom} placeholder="from" />
-            <Select value={edgeTo} options={nodeOptions} onChange={setEdgeTo} placeholder="to" />
+            <Select value={edgeFrom} options={nodeOptions} onChange={setEdgeFrom} placeholder={t('placeholderFrom')} />
+            <Select value={edgeTo} options={nodeOptions} onChange={setEdgeTo} placeholder={t('placeholderTo')} />
             <Button icon={<Plus size={16} />} onClick={addEdge} disabled={nodeOptions.length < 2} />
           </div>
           <div className="list-box edge-list">
@@ -2024,19 +2178,22 @@ export default function App() {
                         {isPathLocked(edge) ? <Lock className="inline-lock" size={13} /> : null}
                       </strong>
                       <small>
-                        {edge.path_points?.length || 0} path points - {getTemporaryPoints(edge).length} temp points
-                        {isPathLocked(edge) ? ' - locked' : ''}
+                        {t('edgeListMeta', {
+                          pathCount: edge.path_points?.length || 0,
+                          tempCount: getTemporaryPoints(edge).length,
+                          lockedSuffix: isPathLocked(edge) ? t('edgeListLockedSuffix') : '',
+                        })}
                       </small>
                     </span>
                   </button>
                 );
               })
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No edges" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('emptyNoEdges')} />
             )}
           </div>
           <Button danger block icon={<Trash2 size={16} />} onClick={deleteSelectedEdge} disabled={!selectedEdge}>
-            Delete Edge
+            {t('buttonDeleteEdge')}
           </Button>
         </section>
 
@@ -2044,12 +2201,12 @@ export default function App() {
           <section className="panel-section path-editor">
             <div className="section-title">
               <Route size={16} />
-              <span>Edge {selectedEdge.from} -&gt; {selectedEdge.to}</span>
+              <span>{t('sectionEdgeTitle', { from: selectedEdge.from, to: selectedEdge.to })}</span>
             </div>
             <div className={`edge-lock-row ${selectedEdgeLocked ? 'is-locked' : ''}`}>
               <span>
                 {selectedEdgeLocked ? <Lock size={14} /> : <Unlock size={14} />}
-                Path lock
+                {t('labelPathLock')}
               </span>
               <Switch
                 size="small"
@@ -2061,16 +2218,16 @@ export default function App() {
             </div>
             <div className="edge-action-grid">
               <Button icon={<Plus size={16} />} onClick={addTemporaryPoint} disabled={selectedEdgeLocked}>
-                Temp Point
+                {t('buttonTempPoint')}
               </Button>
               <Button icon={<Plus size={16} />} onClick={insertPathPoint} disabled={selectedEdgeLocked}>
-                Path Point
+                {t('buttonPathPoint')}
               </Button>
               <Button icon={<RefreshCw size={16} />} onClick={regenerateSelectedEdge} disabled={selectedEdgeLocked}>
-                Regenerate
+                {t('buttonRegenerate')}
               </Button>
             </div>
-            <div className="subsection-title">Temporary topo points</div>
+            <div className="subsection-title">{t('subsectionTemporaryTopoPoints')}</div>
             {selectedTemporaryPoints.length ? (
               <div className="temp-point-list">
                 {selectedTemporaryPoints.map((point, index) => {
@@ -2095,7 +2252,7 @@ export default function App() {
                           onChange={(value) => updateTemporaryPointField(index, field, value)}
                         />
                       ))}
-                      <Tooltip title="Delete temp point">
+                      <Tooltip title={t('tooltipDeleteTempPoint')}>
                         <Button
                           shape="circle"
                           size="small"
@@ -2112,9 +2269,9 @@ export default function App() {
                 })}
               </div>
             ) : (
-              <div className="empty-inline">No temporary topo points</div>
+              <div className="empty-inline">{t('emptyNoTemporaryTopoPoints')}</div>
             )}
-            <div className="subsection-title">Path points</div>
+            <div className="subsection-title">{t('subsectionPathPoints')}</div>
             <div className="path-point-list">
               {(selectedEdge.path_points || []).map((point, index) => {
                 const isEndpoint = index === 0 || index === (selectedEdge.path_points || []).length - 1;
@@ -2122,9 +2279,9 @@ export default function App() {
                 return (
                   <div className="path-point-row" key={`${point.seq}-${index}`}>
                     <div className="path-point-row-header">
-                      <span className="path-point-seq">Seq {point.seq}</span>
+                      <span className="path-point-seq">{t('labelSeq', { seq: point.seq })}</span>
                       <span className="point-actions">
-                        <Tooltip title={isEndpoint ? 'Endpoint is already a topo point' : 'Convert to topo point'}>
+                        <Tooltip title={isEndpoint ? t('tooltipEndpointAlreadyTopo') : t('tooltipConvertToTopoPoint')}>
                           <Button
                             shape="circle"
                             size="small"
@@ -2133,7 +2290,7 @@ export default function App() {
                             disabled={selectedEdgeLocked || isEndpoint}
                           />
                         </Tooltip>
-                        <Tooltip title="Delete point">
+                        <Tooltip title={t('tooltipDeletePoint')}>
                           <Button
                             shape="circle"
                             size="small"
@@ -2147,7 +2304,7 @@ export default function App() {
                     <div className="point-value-grid">
                       {['x', 'y', 'z'].map((field) => (
                         <label key={field}>
-                          <span>{field.toUpperCase()} (m)</span>
+                          <span>{t('labelAxisMeters', { axis: field.toUpperCase() })}</span>
                           <InputNumber
                             value={point[field]}
                             step={0.05}
@@ -2160,7 +2317,7 @@ export default function App() {
                     </div>
                     <div className="rotation-value-grid">
                       <label>
-                        <span>Angle (deg)</span>
+                        <span>{t('labelAngleDeg')}</span>
                         <InputNumber
                           value={getRotationField(point, 'angle')}
                           step={1}
@@ -2170,7 +2327,7 @@ export default function App() {
                         />
                       </label>
                       <label>
-                        <span>Radian (rad)</span>
+                        <span>{t('labelRadianRad')}</span>
                         <InputNumber
                           value={getRotationField(point, 'radian')}
                           step={0.05}
@@ -2208,7 +2365,7 @@ export default function App() {
             className="floating-alert"
             type="info"
             showIcon
-            message="Placement mode"
+            message={t('alertPlacementMode')}
           />
         ) : null}
         <TopologyViewer
@@ -2218,6 +2375,7 @@ export default function App() {
           backgroundColor={backgroundColor}
           pointCloudColor={pointCloudColor}
           pointCloudSize={pointCloudSize}
+          crossSection={crossSection}
           selectedNodeId={selectedNodeId}
           selectedEdgeKey={selectedEdgeKey}
           selectedTempPointKey={selectedTempPointKey}
@@ -2237,7 +2395,7 @@ export default function App() {
       </main>
 
       <Drawer
-        title="History"
+        title={t('drawerHistoryTitle')}
         placement="right"
         width={420}
         open={historyOpen}
@@ -2246,10 +2404,10 @@ export default function App() {
         <div className="history-drawer">
           <Space.Compact block>
             <Button block icon={<Undo2 size={16} />} onClick={undoLast} disabled={!canUndo}>
-              Undo
+              {t('buttonUndo')}
             </Button>
             <Button block icon={<RefreshCw size={16} />} onClick={() => restoreHistoryIndex(historyState.cursor)}>
-              Restore Current
+              {t('buttonRestoreCurrent')}
             </Button>
           </Space.Compact>
 
@@ -2268,10 +2426,15 @@ export default function App() {
                   <span className="history-main">
                     <strong>{entry.label}</strong>
                     <small>
-                      {formatHistoryTime(entry.timestamp)} - {snapshot.topology.topology_nodes.length} nodes - {snapshot.topology.edges.length} edges - {snapshot.spacing.toFixed(2)}m
+                      {t('historyMeta', {
+                        time: formatHistoryTime(entry.timestamp),
+                        nodes: snapshot.topology.topology_nodes.length,
+                        edges: snapshot.topology.edges.length,
+                        spacing: snapshot.spacing.toFixed(2),
+                      })}
                     </small>
                   </span>
-                  <span className="history-state">{isCurrent ? 'Current' : 'Restore'}</span>
+                  <span className="history-state">{isCurrent ? t('historyStateCurrent') : t('historyStateRestore')}</span>
                 </button>
               );
             })}

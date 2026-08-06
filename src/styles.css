@@ -192,6 +192,35 @@ textarea {
   width: 100%;
 }
 
+.cross-section-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cross-section-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cross-section-axis-label {
+  flex: 1;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cross-section-bounds {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.cross-section-bounds .ant-input-number {
+  width: 100%;
+}
+
 .view-face-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
