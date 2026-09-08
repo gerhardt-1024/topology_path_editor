@@ -44,6 +44,12 @@ import { useI18n } from './i18n';
 import { parseMapFile } from './helpers/fileLoaders';
 import { getTypeColor } from './helpers/colors';
 import {
+  DEFAULT_DOWNSAMPLE_LEAF_SIZE,
+  clampDownsampleLeafSize,
+  voxelDownsamplePositions,
+} from './helpers/pointCloudDownsample';
+import { downloadBinaryPcd } from './helpers/pcdExport';
+import {
   DEFAULT_SPACING,
   LOCKED_EDGE_FIELD,
   TEMPORARY_POINTS_FIELD,
@@ -495,6 +501,7 @@ export default function App() {
   const [pointCloudSize, setPointCloudSize] = useState(DEFAULT_POINT_CLOUD_SIZE);
   const [pointCloudColor, setPointCloudColor] = useState(DEFAULT_POINT_CLOUD_COLOR);
   const [pointCloudColorInput, setPointCloudColorInput] = useState(DEFAULT_POINT_CLOUD_COLOR);
+  const [downsampleLeafSize, setDownsampleLeafSize] = useState(DEFAULT_DOWNSAMPLE_LEAF_SIZE);
   const [mapBounds, setMapBounds] = useState(null);
   const [crossSection, setCrossSection] = useState(null);
   const [activeViewFace, setActiveViewFace] = useState(null);
@@ -576,6 +583,11 @@ export default function App() {
     [nodeTypes],
   );
 
+  const displayMapData = useMemo(() => {
+    if (!mapData?.positions?.length) return mapData;
+    return { ...mapData, positions: voxelDownsamplePositions(mapData.positions, downsampleLeafSize) };
+  }, [mapData, downsampleLeafSize]);
+
   const canUndo = historyState.cursor > 0;
   const canReverseRoute = topology.topology_nodes.length > 1 || topology.edges.length > 0;
   const currentHistoryEntry = historyState.entries[historyState.cursor];
@@ -610,6 +622,10 @@ export default function App() {
 
   const changePointCloudSize = (value) => {
     setPointCloudSize(clampPointCloudSize(value));
+  };
+
+  const changeDownsampleLeafSize = (value) => {
+    setDownsampleLeafSize(clampDownsampleLeafSize(value));
   };
 
   const toggleCrossSectionAxis = (axis, enabled) => {
@@ -1717,6 +1733,13 @@ export default function App() {
     message.success(t('toastTopologyExported'));
   };
 
+  const exportMap = () => {
+    if (!mapData?.positions?.length) return;
+    const downsampled = voxelDownsamplePositions(mapData.positions, downsampleLeafSize);
+    downloadBinaryPcd(downsampled, 'map.pcd');
+    message.success(t('toastMapExported', { count: (downsampled.length / 3).toLocaleString() }));
+  };
+
   return (
     <div className="app-shell" style={{ '--page-background': backgroundColor }}>
       <aside className="left-panel">
@@ -1780,6 +1803,20 @@ export default function App() {
           {jsonFileName ? <div className="status-line">{jsonFileName}</div> : null}
           <Button type="primary" block icon={<Download size={16} />} onClick={exportJson}>
             {t('buttonExportJson')}
+          </Button>
+          <label className="field-label">{t('labelDownsampleLeafSize')}</label>
+          <InputNumber
+            min={0.001}
+            max={2}
+            step={0.005}
+            precision={3}
+            value={downsampleLeafSize}
+            addonAfter="m"
+            onChange={changeDownsampleLeafSize}
+            className="full-input"
+          />
+          <Button block icon={<Download size={16} />} disabled={!mapData} onClick={exportMap}>
+            {t('buttonExportMap')}
           </Button>
         </section>
 
@@ -2369,7 +2406,7 @@ export default function App() {
           />
         ) : null}
         <TopologyViewer
-          mapData={mapData}
+          mapData={displayMapData}
           topology={topology}
           spacing={spacing}
           backgroundColor={backgroundColor}

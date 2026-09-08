@@ -14,6 +14,8 @@ const translations = {
     buttonLoadMap: 'Load Map',
     buttonLoadJson: 'Load JSON',
     buttonExportJson: 'Export JSON',
+    labelDownsampleLeafSize: 'Downsample voxel size',
+    buttonExportMap: 'Export Map (map.pcd)',
     sectionAppearance: 'Appearance',
     labelBackground: 'Background',
     ariaSetBackground: 'Set background {color}',
@@ -117,6 +119,7 @@ const translations = {
     toastCannotConvertCurrentConnections: 'The selected topo point cannot be converted with its current edge connections',
     toastDirectEdgeAlreadyExists: 'A direct edge between the neighboring topo points already exists',
     toastTopologyExported: 'Topology JSON exported',
+    toastMapExported: 'Map exported as map.pcd ({count} points)',
     mapStatusLine: '{name} - {format} - {sampled} / {original} points',
 
     historyMovedNode: 'Moved node #{id}',
@@ -160,6 +163,8 @@ const translations = {
     buttonLoadMap: '加载地图',
     buttonLoadJson: '加载 JSON',
     buttonExportJson: '导出 JSON',
+    labelDownsampleLeafSize: '下采样体素大小',
+    buttonExportMap: '导出地图 (map.pcd)',
     sectionAppearance: '外观',
     labelBackground: '背景',
     ariaSetBackground: '设置背景色 {color}',
@@ -263,6 +268,7 @@ const translations = {
     toastCannotConvertCurrentConnections: '当前边的连接方式无法转换所选拓扑点',
     toastDirectEdgeAlreadyExists: '相邻拓扑点之间已存在直接的边',
     toastTopologyExported: '拓扑 JSON 已导出',
+    toastMapExported: '地图已导出为 map.pcd（{count} 个点）',
     mapStatusLine: '{name} - {format} - {sampled} / {original} 个点',
 
     historyMovedNode: '已移动节点 #{id}',
