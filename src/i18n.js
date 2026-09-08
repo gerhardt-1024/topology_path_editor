@@ -119,6 +119,7 @@ const translations = {
     toastCannotConvertCurrentConnections: 'The selected topo point cannot be converted with its current edge connections',
     toastDirectEdgeAlreadyExists: 'A direct edge between the neighboring topo points already exists',
     toastTopologyExported: 'Topology JSON exported',
+    toastExportingMap: 'Downsampling map for export...',
     toastMapExported: 'Map exported as map.pcd ({count} points)',
     mapStatusLine: '{name} - {format} - {sampled} / {original} points',
 
@@ -268,6 +269,7 @@ const translations = {
     toastCannotConvertCurrentConnections: '当前边的连接方式无法转换所选拓扑点',
     toastDirectEdgeAlreadyExists: '相邻拓扑点之间已存在直接的边',
     toastTopologyExported: '拓扑 JSON 已导出',
+    toastExportingMap: '正在下采样地图以导出...',
     toastMapExported: '地图已导出为 map.pcd（{count} 个点）',
     mapStatusLine: '{name} - {format} - {sampled} / {original} 个点',
 

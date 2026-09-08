@@ -493,6 +493,7 @@ export default function App() {
   const { t, lang, setLang } = useI18n();
   const [topology, setTopology] = useState(blankTopology);
   const [mapData, setMapData] = useState(null);
+  const [mapFile, setMapFile] = useState(null);
   const [spacing, setSpacing] = useState(DEFAULT_SPACING);
   const [nodeTypes, setNodeTypes] = useState(blankNodeTypes);
   const [activeType, setActiveType] = useState(blankNodeTypes[0]);
@@ -786,6 +787,7 @@ export default function App() {
       message.loading({ content: t('toastLoadingFile', { name: file.name }), key: 'map' });
       const parsed = await parseMapFile(file);
       setMapData(parsed);
+      setMapFile(file);
       const bounds = computeAxisBounds(parsed.positions);
       setMapBounds(bounds);
       setCrossSection(makeDefaultCrossSection(bounds));
@@ -1733,11 +1735,27 @@ export default function App() {
     message.success(t('toastTopologyExported'));
   };
 
-  const exportMap = () => {
+  const exportMap = async () => {
     if (!mapData?.positions?.length) return;
-    const downsampled = voxelDownsamplePositions(mapData.positions, downsampleLeafSize);
-    downloadBinaryPcd(downsampled, 'map.pcd');
-    message.success(t('toastMapExported', { count: (downsampled.length / 3).toLocaleString() }));
+
+    try {
+      // The in-memory mapData is decimated to a point budget for interactive
+      // display; re-parse the source file at full resolution so the exported
+      // map is voxel-downsampled from the true original point cloud, not
+      // from an already-decimated preview.
+      message.loading({ content: t('toastExportingMap'), key: 'export-map' });
+      const source = mapFile
+        ? await parseMapFile(mapFile, { maxPoints: Infinity })
+        : mapData;
+      const downsampled = voxelDownsamplePositions(source.positions, downsampleLeafSize);
+      downloadBinaryPcd(downsampled, 'map.pcd');
+      message.success({
+        content: t('toastMapExported', { count: (downsampled.length / 3).toLocaleString() }),
+        key: 'export-map',
+      });
+    } catch (error) {
+      message.error({ content: error.message, key: 'export-map' });
+    }
   };
 
   return (
