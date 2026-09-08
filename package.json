@@ -1,6 +1,6 @@
 {
   "name": "topology-path-editor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A single-page React + Three.js application for visualizing point-cloud maps and editing topology nodes, edges, path points, and path-facing rotations.",
   "author": {
     "name": "Topology Path Editor",
