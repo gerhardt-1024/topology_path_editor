@@ -41,7 +41,12 @@ import {
 } from 'lucide-react';
 import TopologyViewer from './components/TopologyViewer';
 import { useI18n } from './i18n';
-import { forEachMapPointChunk, parseMapFile } from './helpers/fileLoaders';
+import {
+  DEFAULT_DISPLAY_MAX_POINTS,
+  clampDisplayMaxPoints,
+  forEachMapPointChunk,
+  parseMapFile,
+} from './helpers/fileLoaders';
 import { getTypeColor } from './helpers/colors';
 import {
   DEFAULT_DOWNSAMPLE_LEAF_SIZE,
@@ -504,6 +509,8 @@ export default function App() {
   const [pointCloudColor, setPointCloudColor] = useState(DEFAULT_POINT_CLOUD_COLOR);
   const [pointCloudColorInput, setPointCloudColorInput] = useState(DEFAULT_POINT_CLOUD_COLOR);
   const [downsampleLeafSize, setDownsampleLeafSize] = useState(DEFAULT_DOWNSAMPLE_LEAF_SIZE);
+  const [displayMaxPoints, setDisplayMaxPoints] = useState(DEFAULT_DISPLAY_MAX_POINTS);
+  const [displayMaxPointsInput, setDisplayMaxPointsInput] = useState(DEFAULT_DISPLAY_MAX_POINTS);
   const [mapBounds, setMapBounds] = useState(null);
   const [crossSection, setCrossSection] = useState(null);
   const [activeViewFace, setActiveViewFace] = useState(null);
@@ -527,6 +534,7 @@ export default function App() {
 
   const mapInputRef = useRef(null);
   const jsonInputRef = useRef(null);
+  const mapLoadIdRef = useRef(0);
   const topologyRef = useRef(topology);
   const spacingRef = useRef(spacing);
   const nodeTypesRef = useRef(nodeTypes);
@@ -779,35 +787,66 @@ export default function App() {
     message.success(t('toastUndone'));
   };
 
-  const handleMapFile = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
+  // Parses a map file down to maxPoints for display. A fresh file resets the
+  // bounds, cross-section and camera; a reload (display point budget changed)
+  // keeps them so only the point density changes.
+  const loadMapFile = async (file, maxPoints, { isReload = false } = {}) => {
+    const loadId = mapLoadIdRef.current + 1;
+    mapLoadIdRef.current = loadId;
 
     try {
       message.loading({ content: t('toastLoadingFile', { name: file.name }), key: 'map' });
       const parsed = await parseMapFile(file, {
-        onProgress: (fraction) => message.loading({
-          content: t('toastLoadingFileProgress', { name: file.name, percent: Math.floor(fraction * 100) }),
-          key: 'map',
-        }),
+        maxPoints,
+        isCancelled: () => mapLoadIdRef.current !== loadId,
+        onProgress: (fraction) => {
+          if (mapLoadIdRef.current !== loadId) return;
+          message.loading({
+            content: t('toastLoadingFileProgress', { name: file.name, percent: Math.floor(fraction * 100) }),
+            key: 'map',
+          });
+        },
       });
+      // A newer load started while this one was reading; drop the stale result.
+      if (mapLoadIdRef.current !== loadId) return;
+
       setMapData(parsed);
       setMapFile(file);
-      const bounds = computeAxisBounds(parsed.positions);
-      setMapBounds(bounds);
-      setCrossSection(makeDefaultCrossSection(bounds));
+      if (!isReload) {
+        const bounds = computeAxisBounds(parsed.positions);
+        setMapBounds(bounds);
+        setCrossSection(makeDefaultCrossSection(bounds));
+        setFitNonce((value) => value + 1);
+      }
       setMapStatus(t('mapStatusLine', {
         name: parsed.name,
         format: parsed.format,
         sampled: parsed.sampledCount.toLocaleString(),
         original: parsed.originalCount.toLocaleString(),
       }));
-      setFitNonce((value) => value + 1);
       message.success({ content: t('toastMapLoaded'), key: 'map' });
     } catch (error) {
+      if (mapLoadIdRef.current !== loadId) return;
       message.error({ content: error.message, key: 'map' });
     }
+  };
+
+  const handleMapFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    await loadMapFile(file, displayMaxPoints);
+  };
+
+  // Commits the edited display point budget and re-reads the current map with
+  // it. Called on blur / Enter / step rather than every keystroke, because a
+  // reload re-reads the whole file.
+  const applyDisplayMaxPoints = (value = displayMaxPointsInput) => {
+    const next = clampDisplayMaxPoints(value);
+    setDisplayMaxPointsInput(next);
+    if (next === displayMaxPoints) return;
+    setDisplayMaxPoints(next);
+    if (mapFile) loadMapFile(mapFile, next, { isReload: true });
   };
 
   const handleTopologyFile = async (event) => {
@@ -1838,6 +1877,21 @@ export default function App() {
           <Button type="primary" block icon={<Download size={16} />} onClick={exportJson}>
             {t('buttonExportJson')}
           </Button>
+          <label className="field-label">{t('labelDisplayMaxPoints')}</label>
+          {/* No min/max here: InputNumber swallows out-of-range typing instead of
+              reporting it, so clampDisplayMaxPoints() enforces the range on commit. */}
+          <InputNumber
+            step={50000}
+            precision={0}
+            value={displayMaxPointsInput}
+            formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+            parser={(value) => value?.replace(/,/g, '')}
+            onChange={(value) => setDisplayMaxPointsInput(value)}
+            onBlur={() => applyDisplayMaxPoints()}
+            onPressEnter={() => applyDisplayMaxPoints()}
+            onStep={(value) => applyDisplayMaxPoints(value)}
+            className="full-input"
+          />
           <label className="field-label">{t('labelDownsampleLeafSize')}</label>
           <InputNumber
             min={0.001}
