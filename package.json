@@ -2,6 +2,7 @@
   "name": "topology-path-editor",
   "version": "1.0.5",
   "description": "A single-page React + Three.js application for visualizing point-cloud maps and editing topology nodes, edges, path points, and path-facing rotations.",
+  "homepage": "https://github.com/gerhardt-1024/topology_path_editor",
   "author": {
     "name": "Topology Path Editor",
     "email": "dev@example.com"
@@ -60,6 +61,9 @@
       "target": [
         "nsis"
       ]
+    },
+    "nsis": {
+      "artifactName": "Topology-Path-Editor-Setup-${version}.${ext}"
     }
   }
 }

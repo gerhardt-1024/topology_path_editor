@@ -1,0 +1,94 @@
+# GitLab release pipeline, the counterpart of .github/workflows/release.yml.
+#
+# Pushing a vX.Y.Z tag builds the Linux .deb and the Windows NSIS .exe on a
+# single Linux Docker runner (the Windows installer is built under wine),
+# uploads both to the project's Generic Package Registry and creates a GitLab
+# release that links to them.
+#
+# Runner without internet access: define these CI/CD variables (Settings >
+# CI/CD > Variables) pointing at internal mirrors; npm and electron-builder
+# pick them up from the environment automatically.
+#   npm_config_registry               e.g. http://<nexus>/repository/npm/
+#   ELECTRON_MIRROR                   e.g. https://npmmirror.com/mirrors/electron/
+#   ELECTRON_BUILDER_BINARIES_MIRROR  e.g. https://npmmirror.com/mirrors/electron-builder-binaries/
+# The job image itself (BUILDER_IMAGE) must also be pullable by the runner.
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+
+stages:
+  - package
+  - release
+
+variables:
+  BUILDER_IMAGE: electronuserland/builder:22-wine-05.26
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/topology-path-editor/${CI_COMMIT_TAG}"
+  npm_config_cache: "${CI_PROJECT_DIR}/.cache/npm"
+  ELECTRON_BUILDER_CACHE: "${CI_PROJECT_DIR}/.cache/electron-builder"
+
+package:
+  stage: package
+  image: $BUILDER_IMAGE
+  cache:
+    key: electron-build
+    paths:
+      - .cache/
+  script:
+    - |
+      PACKAGE_VERSION=$(node -p "require('./package.json').version")
+      if [ "v${PACKAGE_VERSION}" != "${CI_COMMIT_TAG}" ]; then
+        echo "Tag ${CI_COMMIT_TAG} does not match package.json version ${PACKAGE_VERSION}"
+        exit 1
+      fi
+    - npm ci
+    - npm run build
+    - npx electron-builder --linux deb --win nsis --publish never
+    - |
+      for file in release/*.deb release/*.exe; do
+        echo "Uploading ${file}"
+        curl --fail --silent --show-error \
+          --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+          --upload-file "${file}" \
+          "${PACKAGE_REGISTRY_URL}/$(basename "${file}")"
+        echo
+      done
+  artifacts:
+    paths:
+      - release/*.deb
+      - release/*.exe
+    expire_in: 30 days
+
+release:
+  stage: release
+  image: $BUILDER_IMAGE
+  needs:
+    - job: package
+      artifacts: true
+  script:
+    - |
+      node -e '
+        const fs = require("fs");
+        const tag = process.env.CI_COMMIT_TAG;
+        const base = process.env.PACKAGE_REGISTRY_URL;
+        const files = fs.readdirSync("release").filter((name) => /\.(deb|exe)$/.test(name));
+        fs.writeFileSync("release.json", JSON.stringify({
+          tag_name: tag,
+          name: tag,
+          description: `Topology Path Editor ${tag}`,
+          assets: {
+            links: files.map((name) => ({
+              name,
+              url: `${base}/${name}`,
+              link_type: "package",
+            })),
+          },
+        }));
+      '
+    - cat release.json
+    - |
+      curl --fail --silent --show-error \
+        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --header "Content-Type: application/json" \
+        --data @release.json \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
