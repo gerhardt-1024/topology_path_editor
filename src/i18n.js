@@ -92,6 +92,7 @@ const translations = {
     historyMeta: '{time} - {nodes} nodes - {edges} edges - {spacing}m',
 
     toastLoadingFile: 'Loading {name}',
+    toastLoadingFileProgress: 'Loading {name}... {percent}%',
     toastMapLoaded: 'Map loaded',
     toastLoadedFile: 'Loaded {name}',
     toastUndone: 'Undone',
@@ -120,6 +121,7 @@ const translations = {
     toastDirectEdgeAlreadyExists: 'A direct edge between the neighboring topo points already exists',
     toastTopologyExported: 'Topology JSON exported',
     toastExportingMap: 'Downsampling map for export...',
+    toastExportingMapProgress: 'Downsampling map for export... {percent}%',
     toastMapExported: 'Map exported as map.pcd ({count} points)',
     mapStatusLine: '{name} - {format} - {sampled} / {original} points',
 
@@ -242,6 +244,7 @@ const translations = {
     historyMeta: '{time} - {nodes} 个节点 - {edges} 条边 - {spacing}m',
 
     toastLoadingFile: '正在加载 {name}',
+    toastLoadingFileProgress: '正在加载 {name}... {percent}%',
     toastMapLoaded: '地图已加载',
     toastLoadedFile: '已加载 {name}',
     toastUndone: '已撤销',
@@ -270,6 +273,7 @@ const translations = {
     toastDirectEdgeAlreadyExists: '相邻拓扑点之间已存在直接的边',
     toastTopologyExported: '拓扑 JSON 已导出',
     toastExportingMap: '正在下采样地图以导出...',
+    toastExportingMapProgress: '正在下采样地图以导出... {percent}%',
     toastMapExported: '地图已导出为 map.pcd（{count} 个点）',
     mapStatusLine: '{name} - {format} - {sampled} / {original} 个点',
 

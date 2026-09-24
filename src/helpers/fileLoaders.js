@@ -1,4 +1,8 @@
 const DEFAULT_MAX_POINTS = 250000;
+const PCD_HEADER_PREVIEW_BYTES = 65536;
+// Binary PCD bodies are streamed in slices of this size so multi-GB maps never
+// have to fit into a single ArrayBuffer.
+const PCD_CHUNK_BYTES = 64 * 1024 * 1024;
 
 const textDecoder = new TextDecoder();
 
@@ -7,8 +11,12 @@ export async function parseMapFile(file, options = {}) {
   const maxPoints = options.maxPoints || DEFAULT_MAX_POINTS;
 
   if (extension === 'pcd') {
+    const pcd = await readPcdHeader(file);
+    if (pcd.dataType === 'binary') {
+      return parsePcdBinaryFile(file, pcd, maxPoints, options.onProgress);
+    }
     const buffer = await file.arrayBuffer();
-    return parsePcd(buffer, file.name, maxPoints);
+    return parsePcd(buffer, pcd, file.name, maxPoints);
   }
 
   if (extension === 'ply') {
@@ -24,30 +32,47 @@ export async function parseMapFile(file, options = {}) {
   throw new Error(`Unsupported map format ".${extension}". Load PCD, ASCII PLY, XYZ, TXT, or CSV.`);
 }
 
-function parsePcd(buffer, name, maxPoints) {
-  const headerPreview = textDecoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 65536)));
+// Feeds every point of a map file to onChunk as Float32Array xyz batches, so
+// full-resolution consumers (map export) never hold the whole cloud at once.
+export async function forEachMapPointChunk(file, onChunk, options = {}) {
+  const extension = file.name.split('.').pop()?.toLowerCase();
+
+  if (extension === 'pcd') {
+    const pcd = await readPcdHeader(file);
+    if (pcd.dataType === 'binary') {
+      await streamPcdBinaryPoints(file, pcd, 1, onChunk, options.onProgress);
+      return;
+    }
+  }
+
+  const parsed = await parseMapFile(file, { maxPoints: Infinity });
+  onChunk(parsed.positions);
+}
+
+async function readPcdHeader(file) {
+  const previewBuffer = await file.slice(0, PCD_HEADER_PREVIEW_BYTES).arrayBuffer();
+  const headerPreview = textDecoder.decode(previewBuffer);
   const dataMatch = headerPreview.match(/DATA\s+(ascii|binary|binary_compressed)\s*(?:\r?\n)/i);
 
   if (!dataMatch) {
     throw new Error('Invalid PCD: DATA header was not found.');
   }
 
-  const dataType = dataMatch[1].toLowerCase();
-
   const headerEnd = dataMatch.index + dataMatch[0].length;
-  const headerText = headerPreview.slice(0, headerEnd);
-  const header = parsePcdHeader(headerText);
+  return {
+    dataType: dataMatch[1].toLowerCase(),
+    headerEnd,
+    header: parsePcdHeader(headerPreview.slice(0, headerEnd)),
+  };
+}
 
+function parsePcd(buffer, { dataType, headerEnd, header }, name, maxPoints) {
   if (dataType === 'ascii') {
     const body = textDecoder.decode(buffer.slice(headerEnd));
     return parsePcdAsciiBody(body, header, name, maxPoints);
   }
 
-  if (dataType === 'binary_compressed') {
-    return parsePcdBinaryCompressedBody(buffer, headerEnd, header, name, maxPoints);
-  }
-
-  return parsePcdBinaryBody(buffer, headerEnd, header, name, maxPoints);
+  return parsePcdBinaryCompressedBody(buffer, headerEnd, header, name, maxPoints);
 }
 
 function parsePcdHeader(headerText) {
@@ -103,29 +128,64 @@ function parsePcdAsciiBody(body, header, name, maxPoints) {
   return buildMapData(positions, name, 'PCD ASCII', total);
 }
 
-function parsePcdBinaryBody(buffer, headerEnd, header, name, maxPoints) {
-  const view = new DataView(buffer, headerEnd);
-  const total = header.points || Math.floor(view.byteLength / header.rowSize);
+async function parsePcdBinaryFile(file, pcd, maxPoints, onProgress) {
+  const total = pcd.header.points || Math.floor((file.size - pcd.headerEnd) / pcd.header.rowSize);
   const stride = Math.max(1, Math.ceil(total / maxPoints));
-  const positions = [];
-  const xField = header.fields.indexOf('x');
-  const yField = header.fields.indexOf('y');
-  const zField = header.fields.indexOf('z');
+  const positions = new Float32Array(Math.ceil(total / stride) * 3);
+  let length = 0;
 
-  for (let pointIndex = 0; pointIndex < total; pointIndex += stride) {
-    const rowOffset = pointIndex * header.rowSize;
-    if (rowOffset + header.rowSize > view.byteLength) break;
+  await streamPcdBinaryPoints(file, pcd, stride, (chunk) => {
+    positions.set(chunk, length);
+    length += chunk.length;
+  }, onProgress);
 
-    const x = readPcdScalar(view, rowOffset + header.offsets.x, header.type[xField], header.size[xField]);
-    const y = readPcdScalar(view, rowOffset + header.offsets.y, header.type[yField], header.size[yField]);
-    const z = readPcdScalar(view, rowOffset + header.offsets.z, header.type[zField], header.size[zField]);
+  return buildMapData(positions.slice(0, length), file.name, 'PCD Binary', total);
+}
 
-    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-      positions.push(x, y, z);
+// Reads the binary PCD body slice by slice, decoding every stride-th row and
+// handing each slice's finite points to onChunk.
+async function streamPcdBinaryPoints(file, { headerEnd, header }, stride, onChunk, onProgress) {
+  const { rowSize } = header;
+  const storedRows = Math.floor((file.size - headerEnd) / rowSize);
+  const rowCount = Math.min(header.points || storedRows, storedRows);
+  const rowsPerChunk = Math.max(1, Math.floor(PCD_CHUNK_BYTES / rowSize));
+  const readers = ['x', 'y', 'z'].map((field) => {
+    const fieldIndex = header.fields.indexOf(field);
+    return {
+      offset: header.offsets[field],
+      type: header.type[fieldIndex],
+      size: header.size[fieldIndex],
+    };
+  });
+  const [xReader, yReader, zReader] = readers;
+
+  for (let startRow = 0; startRow < rowCount; startRow += rowsPerChunk) {
+    const endRow = Math.min(rowCount, startRow + rowsPerChunk);
+    const buffer = await file
+      .slice(headerEnd + startRow * rowSize, headerEnd + endRow * rowSize)
+      .arrayBuffer();
+    const view = new DataView(buffer);
+    const firstRow = Math.ceil(startRow / stride) * stride;
+    const positions = new Float32Array(Math.max(0, Math.ceil((endRow - firstRow) / stride)) * 3);
+    let writeIndex = 0;
+
+    for (let row = firstRow; row < endRow; row += stride) {
+      const rowOffset = (row - startRow) * rowSize;
+      const x = readPcdScalar(view, rowOffset + xReader.offset, xReader.type, xReader.size);
+      const y = readPcdScalar(view, rowOffset + yReader.offset, yReader.type, yReader.size);
+      const z = readPcdScalar(view, rowOffset + zReader.offset, zReader.type, zReader.size);
+
+      if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+        positions[writeIndex] = x;
+        positions[writeIndex + 1] = y;
+        positions[writeIndex + 2] = z;
+        writeIndex += 3;
+      }
     }
-  }
 
-  return buildMapData(positions, name, 'PCD Binary', total);
+    onChunk(positions.subarray(0, writeIndex));
+    onProgress?.(endRow / rowCount);
+  }
 }
 
 function parsePcdBinaryCompressedBody(buffer, headerEnd, header, name, maxPoints) {
@@ -300,6 +360,6 @@ function buildMapData(positions, name, format, originalCount) {
     format,
     originalCount,
     sampledCount: positions.length / 3,
-    positions: new Float32Array(positions),
+    positions: positions instanceof Float32Array ? positions : new Float32Array(positions),
   };
 }

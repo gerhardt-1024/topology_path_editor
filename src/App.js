@@ -41,11 +41,12 @@ import {
 } from 'lucide-react';
 import TopologyViewer from './components/TopologyViewer';
 import { useI18n } from './i18n';
-import { parseMapFile } from './helpers/fileLoaders';
+import { forEachMapPointChunk, parseMapFile } from './helpers/fileLoaders';
 import { getTypeColor } from './helpers/colors';
 import {
   DEFAULT_DOWNSAMPLE_LEAF_SIZE,
   clampDownsampleLeafSize,
+  createVoxelAccumulator,
   voxelDownsamplePositions,
 } from './helpers/pointCloudDownsample';
 import { downloadBinaryPcd } from './helpers/pcdExport';
@@ -785,7 +786,12 @@ export default function App() {
 
     try {
       message.loading({ content: t('toastLoadingFile', { name: file.name }), key: 'map' });
-      const parsed = await parseMapFile(file);
+      const parsed = await parseMapFile(file, {
+        onProgress: (fraction) => message.loading({
+          content: t('toastLoadingFileProgress', { name: file.name, percent: Math.floor(fraction * 100) }),
+          key: 'map',
+        }),
+      });
       setMapData(parsed);
       setMapFile(file);
       const bounds = computeAxisBounds(parsed.positions);
@@ -1740,17 +1746,27 @@ export default function App() {
 
     try {
       // The in-memory mapData is decimated to a point budget for interactive
-      // display; re-parse the source file at full resolution so the exported
+      // display; re-read the source file at full resolution so the exported
       // map is voxel-downsampled from the true original point cloud, not
-      // from an already-decimated preview.
+      // from an already-decimated preview. Points are streamed into the voxel
+      // grid chunk by chunk so multi-GB maps never sit in memory at once.
       message.loading({ content: t('toastExportingMap'), key: 'export-map' });
-      const source = mapFile
-        ? await parseMapFile(mapFile, { maxPoints: Infinity })
-        : mapData;
-      const downsampled = voxelDownsamplePositions(source.positions, downsampleLeafSize);
+      const accumulator = createVoxelAccumulator(downsampleLeafSize);
+      if (mapFile) {
+        await forEachMapPointChunk(mapFile, (chunk) => accumulator.add(chunk), {
+          onProgress: (fraction) => message.loading({
+            content: t('toastExportingMapProgress', { percent: Math.floor(fraction * 100) }),
+            key: 'export-map',
+          }),
+        });
+      } else {
+        accumulator.add(mapData.positions);
+      }
+      const downsampled = accumulator.finishChunks();
       downloadBinaryPcd(downsampled, 'map.pcd');
+      const exportedCount = downsampled.reduce((total, chunk) => total + chunk.length, 0) / 3;
       message.success({
-        content: t('toastMapExported', { count: (downsampled.length / 3).toLocaleString() }),
+        content: t('toastMapExported', { count: exportedCount.toLocaleString() }),
         key: 'export-map',
       });
     } catch (error) {

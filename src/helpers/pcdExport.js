@@ -1,6 +1,9 @@
 // Binary PCD writer: xyz-only float32 fields, no color/intensity channels.
+// Accepts one Float32Array or a list of them, so very large maps can be written
+// without concatenating every point into a single buffer.
 export function buildBinaryPcdBlob(positions) {
-  const pointCount = positions.length / 3;
+  const chunks = Array.isArray(positions) ? positions : [positions];
+  const pointCount = chunks.reduce((total, chunk) => total + chunk.length, 0) / 3;
   const header =
     '# .PCD v0.7 - Point Cloud Data file format\n' +
     'VERSION 0.7\n' +
@@ -15,9 +18,9 @@ export function buildBinaryPcdBlob(positions) {
     'DATA binary\n';
 
   const headerBytes = new TextEncoder().encode(header);
-  const bodyBytes = new Uint8Array(positions.buffer, positions.byteOffset, positions.byteLength);
+  const bodyParts = chunks.map((chunk) => new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
 
-  return new Blob([headerBytes, bodyBytes], { type: 'application/octet-stream' });
+  return new Blob([headerBytes, ...bodyParts], { type: 'application/octet-stream' });
 }
 
 export function downloadBinaryPcd(positions, fileName = 'map.pcd') {
