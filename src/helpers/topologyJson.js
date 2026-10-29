@@ -110,3 +110,19 @@ export function downloadTopologyJson(topology, spacing, fileName = 'topology.jso
   link.remove();
   URL.revokeObjectURL(url);
 }
+
+// Parses an odometry trajectory text file: one "x y z" point per line
+// (whitespace or comma separated, z optional), '#' lines are comments.
+export async function loadOdomTrajectory(file) {
+  const text = await file.text();
+  const points = [];
+  text.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const values = trimmed.split(/[\s,;]+/).map(Number);
+    if (values.length < 2 || !values.slice(0, 3).every(Number.isFinite)) return;
+    points.push({ x: values[0], y: values[1], z: values[2] ?? 0 });
+  });
+  if (!points.length) throw new Error(`No valid points found in ${file.name}`);
+  return points;
+}

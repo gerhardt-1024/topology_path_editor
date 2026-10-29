@@ -74,6 +74,7 @@ import {
   downloadTopologyJson,
   getNextNodeId,
   getTypesFromTopology,
+  loadOdomTrajectory,
   loadTopologyJson,
 } from './helpers/topologyJson';
 import {
@@ -534,6 +535,7 @@ export default function App() {
 
   const mapInputRef = useRef(null);
   const jsonInputRef = useRef(null);
+  const odomInputRef = useRef(null);
   const mapLoadIdRef = useRef(0);
   const topologyRef = useRef(topology);
   const spacingRef = useRef(spacing);
@@ -874,6 +876,51 @@ export default function App() {
       setJsonFileName(file.name);
       setFitNonce((value) => value + 1);
       message.success(t('toastLoadedFile', { name: file.name }));
+    } catch (error) {
+      message.error(error.message);
+    }
+  };
+
+  // Imports an odometry trajectory: every point becomes a node, appended to
+  // the current topology and chained to the next one in file order.
+  const handleOdomFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const points = await loadOdomTrajectory(file);
+      const current = topologyRef.current;
+      const firstId = getNextNodeId(current.topology_nodes);
+      const newNodes = points.map((point, index) => ({
+        id: firstId + index,
+        ...point,
+        type: activeTypeRef.current,
+      }));
+      const newEdges = newNodes.slice(1).map((node, index) => ({
+        from: newNodes[index].id,
+        to: node.id,
+        [LOCKED_EDGE_FIELD]: false,
+        path_points: [],
+      }));
+      const firstEdgeIndex = current.edges.length;
+      const nextTopology = regenerateAffectedPaths(
+        {
+          ...current,
+          topology_nodes: [...current.topology_nodes, ...newNodes],
+          edges: [...current.edges, ...newEdges],
+        },
+        spacingRef.current,
+        newEdges.map((edge, index) => firstEdgeIndex + index),
+      );
+      commitEditorState(t('historyImportedOdom', { name: file.name, count: newNodes.length }), nextTopology);
+      setSelectedNodeId(firstId);
+      setSelectedEdgeKey(null);
+      setSelectedTempPointKey(null);
+      setEdgeFrom(nextTopology.edges[0]?.from ?? nextTopology.topology_nodes[0]?.id ?? null);
+      setEdgeTo(nextTopology.edges[0]?.to ?? nextTopology.topology_nodes[1]?.id ?? null);
+      setFitNonce((value) => value + 1);
+      message.success(t('toastImportedOdom', { name: file.name, count: newNodes.length }));
     } catch (error) {
       message.error(error.message);
     }
@@ -1872,6 +1919,10 @@ export default function App() {
           </Space.Compact>
           <input data-testid="map-input" ref={mapInputRef} hidden type="file" accept=".pcd,.ply,.xyz,.txt,.csv" onChange={handleMapFile} />
           <input data-testid="topology-input" ref={jsonInputRef} hidden type="file" accept=".json,application/json" onChange={handleTopologyFile} />
+          <Button block icon={<Route size={16} />} onClick={() => odomInputRef.current?.click()}>
+            {t('buttonImportOdom')}
+          </Button>
+          <input data-testid="odom-input" ref={odomInputRef} hidden type="file" accept=".txt,.csv,.xyz" onChange={handleOdomFile} />
           {mapStatus ? <div className="status-line">{mapStatus}</div> : null}
           {jsonFileName ? <div className="status-line">{jsonFileName}</div> : null}
           <Button type="primary" block icon={<Download size={16} />} onClick={exportJson}>
